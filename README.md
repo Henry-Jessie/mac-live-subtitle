@@ -4,6 +4,14 @@
 
 为 macOS 提供超低延迟的系统音频实时转录和翻译，带浮动字幕窗口。
 
+
+## Demo
+
+
+https://github.com/user-attachments/assets/2916e3a4-0a5a-4f21-bdc2-b2b0a222e772
+
+
+
 ## 功能特点
 
 - **超低延迟转录** 使用 Deepgram 的流式 API（<500ms）
