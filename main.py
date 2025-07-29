@@ -184,7 +184,14 @@ class DeepgramLiveSubtitle:
             window_opacity=display_config['window_opacity'],
             always_on_top=display_config['always_on_top'],
             position_y_offset=display_config['position_y_offset'],
-            resizable=display_config.get('resizable', False)
+            resizable=display_config.get('resizable', False),
+            # Font configurations
+            original_font_family=display_config.get('original_font', {}).get('family', 'Arial'),
+            original_font_size=display_config.get('original_font', {}).get('size', 20),
+            original_font_color=display_config.get('original_font', {}).get('color', '#FFFFFF'),
+            chinese_font_family=display_config.get('chinese_font', {}).get('family', 'PingFang SC'),
+            chinese_font_size=display_config.get('chinese_font', {}).get('size', 18),
+            chinese_font_color=display_config.get('chinese_font', {}).get('color', '#FFFF00')
         )
         
         # Start transcriber

@@ -32,12 +32,12 @@ display:
   # Font settings
   original_font:
     family: "Arial"
-    size: 20
+    size: 22
     color: "#FFFFFF"
   
   chinese_font:
-    family: "Microsoft YaHei"
-    size: 18
+    family: "PingFang SC"
+    size: 20
     color: "#FFFF00"
 
 # Subtitle settings

@@ -157,6 +157,17 @@ display:
   always_on_top: true
   position_y_offset: 100  # Distance from bottom
   resizable: true  # Allow window resizing
+  
+  # Font settings
+  original_font:
+    family: "Arial"        # Original text font
+    size: 22              # Font size
+    color: "#FFFFFF"      # White color
+    
+  chinese_font:
+    family: "PingFang SC" # Chinese font (macOS)
+    size: 20              # Font size
+    color: "#FFFF00"      # Yellow color
 ```
 
 See `config/config.yaml` for the full configuration options.
@@ -270,6 +281,9 @@ python tests/test_window.py --no-resizable
 
 # Disable debug output
 python tests/test_window.py --no-debug
+
+# Test with custom font size
+python tests/test_window.py --font-size 30
 ```
 - Tests if the subtitle window displays correctly
 - Shows test messages in both English and Chinese, and tests long text wrapping

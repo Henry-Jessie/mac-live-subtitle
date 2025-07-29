@@ -11,22 +11,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.subtitle_display import SubtitleDisplay
 
 
-def test_window(resizable=None, debug=True):
+def test_window(resizable=None, debug=True, font_size=None):
     """Test the subtitle window shows properly.
     
     Args:
         resizable: True/False to test with/without resizable, None to use default
         debug: Whether to print debug information
+        font_size: Test with custom font size
     """
-    print(f"Testing subtitle window (resizable={resizable}, debug={debug})...")
+    print(f"Testing subtitle window (resizable={resizable}, debug={debug}, font_size={font_size})...")
     
-    # Create display with specified resizable setting
+    # Create display with specified settings
+    kwargs = {}
     if resizable is not None:
-        display = SubtitleDisplay(resizable=resizable)
-        print(f"Created display with resizable={resizable}")
-    else:
-        display = SubtitleDisplay()
-        print("Created display with default settings")
+        kwargs['resizable'] = resizable
+    if font_size is not None:
+        kwargs['original_font_size'] = font_size
+        kwargs['chinese_font_size'] = font_size
+        
+    display = SubtitleDisplay(**kwargs)
+    print(f"Created display with settings: {kwargs if kwargs else 'defaults'}")
     
     # Schedule subtitle updates
     def schedule_updates():
@@ -133,6 +137,7 @@ if __name__ == "__main__":
     parser.add_argument('--resizable', action='store_true', help='Test with resizable window')
     parser.add_argument('--no-resizable', action='store_true', help='Test without resizable window')
     parser.add_argument('--no-debug', action='store_true', help='Disable debug output')
+    parser.add_argument('--font-size', type=int, help='Test with custom font size')
     
     args = parser.parse_args()
     
@@ -144,4 +149,4 @@ if __name__ == "__main__":
         resizable = False
     
     # Run test
-    test_window(resizable=resizable, debug=not args.no_debug)
+    test_window(resizable=resizable, debug=not args.no_debug, font_size=args.font_size)

@@ -32,7 +32,13 @@ class SubtitleDisplay:
         window_opacity: float = 0.9,
         always_on_top: bool = True,
         position_y_offset: int = 100,
-        resizable: bool = False
+        resizable: bool = False,
+        original_font_family: str = 'Arial',
+        original_font_size: int = 20,
+        original_font_color: str = '#FFFFFF',
+        chinese_font_family: str = 'PingFang SC',
+        chinese_font_size: int = 18,
+        chinese_font_color: str = '#FFFF00'
     ):
         self.window_width = window_width
         self.window_height = window_height
@@ -40,6 +46,14 @@ class SubtitleDisplay:
         self.always_on_top = always_on_top
         self.position_y_offset = position_y_offset
         self.resizable = resizable
+        
+        # Font configurations
+        self.original_font_family = original_font_family
+        self.original_font_size = original_font_size
+        self.original_font_color = original_font_color
+        self.chinese_font_family = chinese_font_family
+        self.chinese_font_size = chinese_font_size
+        self.chinese_font_color = chinese_font_color
         
         # Threading
         self.root = None
@@ -174,8 +188,8 @@ class SubtitleDisplay:
         self.original_label = tk.Label(
             main_frame,
             text="",
-            font=('Arial', 20),
-            fg='white',
+            font=(self.original_font_family, self.original_font_size),
+            fg=self.original_font_color,
             bg='black',
             wraplength=self.window_width - 20,
             justify=tk.CENTER
@@ -186,8 +200,8 @@ class SubtitleDisplay:
         self.chinese_label = tk.Label(
             main_frame,
             text="",
-            font=('PingFang SC', 18),  # macOS Chinese font
-            fg='#FFFF00',  # Yellow
+            font=(self.chinese_font_family, self.chinese_font_size),
+            fg=self.chinese_font_color,
             bg='black',
             wraplength=self.window_width - 20,
             justify=tk.CENTER

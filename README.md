@@ -157,6 +157,17 @@ display:
   always_on_top: true
   position_y_offset: 100  # 距离底部的距离
   resizable: true  # 允许调整窗口大小
+  
+  # 字体设置
+  original_font:
+    family: "Arial"        # 原文字体
+    size: 22              # 字体大小
+    color: "#FFFFFF"      # 白色
+    
+  chinese_font:
+    family: "PingFang SC" # 中文字体（macOS）
+    size: 20              # 字体大小
+    color: "#FFFF00"      # 黄色
 ```
 
 查看 `config/config.yaml` 获取完整配置选项。
@@ -270,6 +281,9 @@ python tests/test_window.py --no-resizable
 
 # 禁用调试输出
 python tests/test_window.py --no-debug
+
+# 测试自定义字体大小
+python tests/test_window.py --font-size 30
 ```
 - 测试字幕窗口是否正确显示
 - 显示中英文测试消息和长文本换行
