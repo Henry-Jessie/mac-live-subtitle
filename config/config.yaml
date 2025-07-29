@@ -1,0 +1,54 @@
+# Deepgram Live Subtitle Configuration
+
+# Audio settings
+audio:
+  device_name: "BlackHole 2ch"  # Virtual audio device name
+  sample_rate: 16000            # Required sample rate
+  channels: 1                   # Mono audio
+  chunk_duration: 0.5           # Seconds per chunk
+  buffer_size: 2048             # Audio buffer size
+
+# Deepgram API settings (ultra-low latency streaming, if DEEPGRAM_API_KEY is set)
+deepgram:
+  model: "nova-3"  # nova-3 supports multi-language real-time transcription
+  language: "multi"  # Use "multi" for automatic multi-language support (zh/ja/en)
+  interim_results: true  # Show partial results for lower perceived latency
+  
+  # Polish model configuration (for subtitle translation/refinement)
+  polish:
+    model: "google/gemini-2.5-flash"  # Model name for polishing/translation
+    api_key_env: "OPENROUTER_API_KEY"  # Environment variable name for API key (e.g., OPENROUTER_API_KEY, ANTHROPIC_API_KEY)
+    base_url: "https://openrouter.ai/api/v1"  # API base URL (e.g., https://openrouter.ai/api/v1)
+
+# Display settings
+display:
+  window_width: 800
+  window_height: 300
+  window_opacity: 0.9
+  always_on_top: true
+  position_y_offset: 100  # Pixels from bottom
+  resizable: true  # Allow window to be resized like a browser
+  
+  # Font settings
+  original_font:
+    family: "Arial"
+    size: 20
+    color: "#FFFFFF"
+  
+  chinese_font:
+    family: "Microsoft YaHei"
+    size: 18
+    color: "#FFFF00"
+
+# Subtitle settings
+subtitle:
+  max_chars_per_line: 50
+  display_duration: 3.0  # Seconds
+  fade_duration: 0.5     # Seconds
+
+# Logging
+logging:
+  level: "INFO"
+  file: "logs/subtitle.log"
+  max_size: "10MB"
+  backup_count: 5

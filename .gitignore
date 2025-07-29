@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Config
+.env
+config/secrets.yaml
+config/*.key
+
+# Logs
+logs/
+*.log
+
+# Audio files
+*.wav
+*.mp3
+*.pcm
+
+# Cache
+.cache/
+temp/
+
+# Temp
+temp/

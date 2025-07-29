@@ -1,0 +1,20 @@
+# Core dependencies
+sounddevice>=0.4.6
+numpy>=1.24.0
+scipy>=1.11
+certifi>=2023.0.0
+
+# API clients
+openai>=1.0.0
+deepgram-sdk>=3.0.0
+
+# Audio processing (sounddevice is preferred over pyaudio for macOS)
+# pyaudio>=0.2.13  # Optional, sounddevice is used instead
+
+# GUI
+# tkinter - Usually pre-installed with Python
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0
+click>=8.1.0
