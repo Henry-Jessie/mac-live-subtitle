@@ -1,0 +1,7 @@
+__pycache__
+transcripts
+.DS_Store
+config.ini
+.venv
+demo/audio/
+*.log

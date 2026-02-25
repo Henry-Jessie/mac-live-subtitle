@@ -1,0 +1,51 @@
+[translation]
+; Translation LLM API endpoint (OpenAI-compatible)
+base_url = https://api.deepseek.com/v1
+; Environment variable name that holds the API key (default: OPENAI_API_KEY)
+api_key_env = DEEPSEEK_API_KEY
+model = deepseek-chat
+target_lang = Simplified Chinese
+; Use LLM for segmentation + translation in one call (default: false, uses heuristic segmentation)
+use_llm_segmenter = true
+; LLM sampling temperature (default: 1.0)
+temperature = 1.0
+; Extra JSON body merged into LLM API calls, e.g. {"thinking": {"type": "disabled"}}
+; extra_body =
+; Enable debug logging for translation requests
+; debug = false
+
+[transcription]
+; ASR backend: deepgram_stream or qwen3_asr_realtime
+backend = qwen3_asr_realtime
+; Source language hint (auto = auto-detect)
+source_language = auto
+
+; --- Deepgram settings ---
+deepgram_model = nova-3
+
+; --- Qwen3 ASR Realtime settings ---
+qwen3_asr_realtime_model = qwen3-asr-flash-realtime
+; Beijing: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+; Singapore: wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime
+qwen3_asr_realtime_ws_url = wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+; Environment variable name for Qwen3 API key
+qwen3_asr_realtime_api_key_env = DASHSCOPE_API_KEY
+; Or set the key directly (takes precedence over env var)
+; qwen3_asr_realtime_api_key =
+; Server-side VAD: when true, Qwen3 server detects speech start/stop automatically;
+; when false, turn_detection is disabled and the client controls audio submission
+qwen3_asr_realtime_server_vad = true
+; VAD sensitivity threshold (0.0 = use server default, higher = less sensitive)
+qwen3_asr_realtime_vad_threshold = 0.0
+; Silence duration in ms before the server considers an utterance finished
+qwen3_asr_realtime_silence_duration_ms = 400
+
+[audio]
+; Audio input device index (auto = auto-detect BlackHole on macOS)
+device_index = auto
+sample_rate = 16000
+; Audio frame step size in seconds for the streaming generator
+streaming_step_size = 0.2
+
+[display]
+always_on_top = true
