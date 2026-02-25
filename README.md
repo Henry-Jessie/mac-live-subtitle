@@ -8,6 +8,9 @@ Real-time speech-to-text and translation with a floating subtitle window for mac
 
 <video src="demo/demo.mp4" width="100%" autoplay muted loop></video>
 
+https://github.com/user-attachments/assets/2faca983-a76b-4591-95a8-5a11c1233a83
+
+
 ## Quick Start
 
 ```bash
