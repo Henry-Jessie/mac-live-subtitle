@@ -60,43 +60,26 @@ A sliding context window (capped by token count) feeds recent source/translation
 - Pushpin button for always-on-top, visible across all macOS Spaces via PyObjC
 - Soft pause/resume (keeps WebSocket alive) and automatic reconnection with exponential backoff
 
-## Audio Routing Setup
+<details>
+<summary><h2>Audio Routing Setup</h2></summary>
 
 To capture system audio you need [BlackHole](https://existential.audio/blackhole/) (`brew install blackhole-2ch`) and a Multi-Output Device that mirrors sound to both your speakers and BlackHole.
 
-1. Open **Audio MIDI Setup** (in /Applications/Utilities/).
-2. Click the **+** button at the bottom left, select **Create Multi-Output Device**.
-3. Check both **BlackHole 2ch** and your regular output device (e.g. MacBook Pro Speakers).
-4. Set the **Primary Device** (master clock) to **BlackHole 2ch**.
-5. Keep the sample rate at **48.0 kHz** (default).
-6. Right-click the Multi-Output Device and select **Use This Device For Sound Output**.
+1. Open **Audio MIDI Setup** (in /Applications/Utilities/)
+2. Click **+** → **Create Multi-Output Device**
+3. Check both **BlackHole 2ch** and your output device (e.g. MacBook Pro Speakers)
+4. Set **Primary Device** to **BlackHole 2ch**, sample rate **48.0 kHz**
+5. Right-click the Multi-Output Device → **Use This Device For Sound Output**
 
 ![Multi-Output Device setup](demo/how_to_set_blackhole.png)
 
-> The Multi-Output Device mirrors audio to all checked devices. BlackHole acts as a loopback — the app reads from its input endpoint while you hear audio normally through your speakers. You can also skip BlackHole and point `device_index` at a physical microphone to transcribe live speech instead.
+> You can also skip BlackHole and point `device_index` at a physical microphone to transcribe live speech instead.
+
+</details>
 
 ## Usage
 
-```bash
-python app.py
-```
-
-A floating subtitle window appears at the bottom of your screen.
-
-- Click **Play** to start capturing and transcribing
-- Use the **gear icon** to switch ASR/translation providers and adjust common options
-- Advanced settings (`use_llm_segmenter`, `temperature`, `extra_body`, VAD parameters) require editing `config.ini` directly
-- Saving settings automatically stops the pipeline — click **Play** again to apply
-
-### Controls
-
-| Button | Action |
-|:---|:---|
-| **Play** | Start transcription (or resume from pause) |
-| **Pause** | Soft-pause the stream (keeps connection alive) |
-| **Stop** | Full stop — tears down the pipeline and clears display |
-| **Gear** | Open the settings popover |
-| **Pin** | Toggle always-on-top |
+Run `python app.py`. Use **Play** / **Pause** / **Stop** to control the pipeline, **Gear** for settings, **Pin** for always-on-top. Advanced settings (`use_llm_segmenter`, `temperature`, `extra_body`, VAD) require editing `config.ini`. Saving settings restarts the pipeline.
 
 ## Configuration
 
