@@ -14,23 +14,28 @@ https://github.com/user-attachments/assets/2faca983-a76b-4591-95a8-5a11c1233a83
 ## Quick Start
 
 ```bash
-brew install blackhole-2ch                        # 1. install virtual audio driver
-# 2. configure Multi-Output Device (see Audio Routing Setup below)
-git clone https://github.com/Henry-Jessie/mac-live-subtitle.git && cd mac-live-subtitle
+# Install
+brew install blackhole-2ch
+git clone https://github.com/Henry-Jessie/mac-live-subtitle.git
+cd mac-live-subtitle
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt                   # 3. install dependencies
-cp config.ini.example config.ini                  # 4. create config file
-export DASHSCOPE_API_KEY="your-key"               # 5. set ASR key (Qwen3, China mainland)
-# For international region, also set ws_url in config.ini — see below
-export DEEPSEEK_API_KEY="your-key"                # 6. set translation LLM key
-python app.py                                     # 7. launch
+pip install -r requirements.txt
+cp config.ini.example config.ini
+
+# Set API keys (get from links below)
+export DASHSCOPE_API_KEY="your-key"    # Qwen3 ASR
+export DEEPSEEK_API_KEY="your-key"     # translation LLM
+
+# Run
+python app.py
 ```
 
-| | Link | Notes |
+Before running, [configure audio routing](#audio-routing-setup) for system audio capture.
+
+| API Key | Get it from | |
 |:---|:---|:---|
-| **Step 2** | [Audio Routing Setup](#audio-routing-setup) | BlackHole + Multi-Output Device configuration |
-| **ASR key** | [DashScope China](https://bailian.console.aliyun.com/) / [DashScope Intl](https://bailian.console.alibabacloud.com/) | Different endpoints & API keys per region — see [Configuration](#configuration) |
-| **Translation key** | [DeepSeek](https://platform.deepseek.com/) | Default LLM provider |
+| Qwen3 ASR | [DashScope China](https://bailian.console.aliyun.com/) / [DashScope Intl](https://bailian.console.alibabacloud.com/) | Region-specific endpoints & keys — see [Configuration](#configuration) |
+| Translation LLM | [DeepSeek](https://platform.deepseek.com/) | Default provider |
 | *Alternatives* | [Deepgram](https://console.deepgram.com/) · [Google AI Studio](https://aistudio.google.com/) · [OpenAI](https://platform.openai.com/) | Deepgram offers $200 free credit |
 
 ## Features
