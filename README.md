@@ -191,7 +191,7 @@ The pipeline has three concurrent stages:
 
 ## Acknowledgments
 
-Inspired by and forked from [Real-Time Translator](https://github.com/Van-Yo/realtime-subtitle) by Van (local ASR + dashboard/overlay architecture). This project replaces local ASR with cloud streaming, adds hybrid LLM segmentation, and consolidates the UI into a single macOS-native window.
+Inspired by and forked from [Real-Time Translator](https://github.com/Vanyoo/realtime-subtitle) by Van (local ASR + dashboard/overlay architecture). This project replaces local ASR with cloud streaming, adds hybrid LLM segmentation, and consolidates the UI into a single macOS-native window.
 
 ## License
 
