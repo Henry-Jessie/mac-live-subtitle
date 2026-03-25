@@ -728,29 +728,23 @@ class SettingsPopover(QFrame):
 
         # ---- Segmented control ----
         seg_frame = QFrame()
-        seg_frame.setFixedHeight(30)
+        seg_frame.setFixedHeight(32)
         seg_frame.setStyleSheet(
-            "QFrame { background: transparent;"
-            "  border: 1px solid rgba(60,60,67,0.18); border-radius: 7px; }"
+            "QFrame { background: #E5E5EA; border: none; border-radius: 8px; }"
         )
         seg_bar = QHBoxLayout()
-        seg_bar.setSpacing(0)
-        seg_bar.setContentsMargins(1, 1, 1, 1)
+        seg_bar.setSpacing(1)
+        seg_bar.setContentsMargins(2, 2, 2, 2)
         seg_frame.setLayout(seg_bar)
         self._tab_buttons: list[QPushButton] = []
         for i, name in enumerate(self._TAB_NAMES):
             btn = QPushButton(name)
             btn.setCheckable(True)
-            if i == 0:
-                radius = "border-radius: 6px 0 0 6px;"
-            elif i == len(self._TAB_NAMES) - 1:
-                radius = "border-radius: 0 6px 6px 0;"
-            else:
-                radius = "border-radius: 0;"
+            btn.setFixedHeight(28)
             btn.setStyleSheet(
                 "QPushButton {"
-                f"  {radius} border: none;"
-                "  background: transparent; color: #6E6E73; font-size: 12px; padding: 0 12px;"
+                "  border: none; border-radius: 6px;"
+                "  background: transparent; color: #6E6E73; font-size: 12px; padding: 0 10px;"
                 "}"
                 "QPushButton:checked {"
                 "  background: #007AFF; color: #FFF;"
