@@ -31,15 +31,20 @@ class Pipeline(QObject):
             step_size=config.streaming_step_size,
         )
 
-        self.translator = Translator(
-            target_lang=config.target_lang,
-            base_url=config.api_base_url,
-            api_key=config.api_key,
-            model=config.model,
-            extra_body=config.translation_extra_body,
-            temperature=config.translation_temperature,
-            debug=self._translation_debug_enabled(),
-        )
+        self.translation_mode = config.translation_mode
+
+        if self.translation_mode != "off":
+            self.translator = Translator(
+                target_lang=config.target_lang,
+                base_url=config.api_base_url,
+                api_key=config.api_key,
+                model=config.model,
+                extra_body=config.translation_extra_body,
+                temperature=config.translation_temperature,
+                debug=self._translation_debug_enabled(),
+            )
+        else:
+            self.translator = None
 
         self.thread = None
 

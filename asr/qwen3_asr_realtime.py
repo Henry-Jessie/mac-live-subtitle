@@ -288,7 +288,7 @@ def run_qwen3_asr_realtime(pipeline) -> None:
                     )
 
                     if appended:
-                        if segmenter.use_llm_segmenter:
+                        if segmenter.use_llm:
                             segmenter.dispatch_llm_if_needed(snap)
                         else:
                             segmenter.try_split(force_flush=False)
@@ -333,18 +333,20 @@ def run_qwen3_asr_realtime(pipeline) -> None:
                     )
 
                     if appended:
-                        if segmenter.use_llm_segmenter:
+                        if segmenter.use_llm:
                             segmenter.dispatch_llm_if_needed(snap, force_flush=True)
                         else:
                             segmenter.try_split(force_flush=True)
                     else:
                         # No new text appended but utterance ended —
                         # flush whatever remains in the buffer.
-                        if segmenter.use_llm_segmenter:
+                        if segmenter.use_llm:
                             with segmenter.state_lock:
                                 remaining = segmenter.pending_confirmed
                             if remaining.strip():
                                 segmenter.dispatch_llm_if_needed(remaining, force_flush=True)
+                        else:
+                            segmenter.try_split(force_flush=True)
                     return
 
                 if etype == "session.finished":
@@ -460,8 +462,7 @@ def run_qwen3_asr_realtime(pipeline) -> None:
             if not getattr(pipeline, "running", False):
                 break
 
-            if segmenter.use_llm_segmenter:
-                segmenter.flush_pending_local()
+            segmenter.flush_pending_local()
 
             last_err = (err.get("msg") or "").strip()
             if not last_err:

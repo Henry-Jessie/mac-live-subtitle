@@ -113,7 +113,7 @@ def run_deepgram_stream(pipeline) -> None:
                             is_final = bool(getattr(event, "is_final", False))
                             speech_final = bool(getattr(event, "speech_final", False))
 
-                            if segmenter.use_llm_segmenter:
+                            if segmenter.use_llm:
                                 if is_final:
                                     appended, _lid, snap, _it = segmenter.update(
                                         append_confirmed=transcript,
@@ -138,7 +138,7 @@ def run_deepgram_stream(pipeline) -> None:
                                     segmenter.update(interim=transcript, interim_strip=True)
 
                         elif etype == "UtteranceEnd":
-                            if segmenter.use_llm_segmenter:
+                            if segmenter.use_llm:
                                 with segmenter.state_lock:
                                     snap = segmenter.pending_confirmed
                                 if snap.strip():
@@ -234,8 +234,7 @@ def run_deepgram_stream(pipeline) -> None:
             if not getattr(pipeline, "running", False):
                 break
 
-            if segmenter.use_llm_segmenter:
-                segmenter.flush_pending_local()
+            segmenter.flush_pending_local()
 
             last_err = (err.get("msg") or "").strip()
             if not last_err:

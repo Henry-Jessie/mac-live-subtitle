@@ -34,9 +34,13 @@ except ImportError:
 class SubtitleItem(QFrame):
     """A single subtitle entry showing original text and translation."""
 
-    def __init__(self, chunk_id: int, timestamp: str, original: str, translated: str = ""):
+    _ORIGINAL_QSS = "color: #86868B; font-family: 'Helvetica Neue', Arial; font-size: 13px; background: transparent;"
+    _ORIGINAL_QSS_ASR_ONLY = "color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: 17px; background: transparent;"
+
+    def __init__(self, chunk_id: int, timestamp: str, original: str, translated: str = "", *, asr_only: bool = False):
         super().__init__()
         self.chunk_id = chunk_id
+        self._asr_only = asr_only
         self.setStyleSheet("background: transparent;")
 
         layout = QVBoxLayout()
@@ -48,7 +52,7 @@ class SubtitleItem(QFrame):
         self.original_label.setTextFormat(Qt.TextFormat.RichText)
         self.original_label.setWordWrap(True)
         self.original_label.setStyleSheet(
-            "color: #86868B; font-family: 'Helvetica Neue', Arial; font-size: 13px; background: transparent;"
+            self._ORIGINAL_QSS_ASR_ONLY if asr_only else self._ORIGINAL_QSS
         )
         layout.addWidget(self.original_label)
 
@@ -58,6 +62,8 @@ class SubtitleItem(QFrame):
             "color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: 17px; font-weight: bold; background: transparent;"
         )
         layout.addWidget(self.translated_label)
+        if asr_only:
+            self.translated_label.hide()
 
         self.update_original(original)
 
@@ -162,6 +168,7 @@ class SubtitleDisplay(QWidget):
 
         self.items: list[tuple[int, SubtitleItem]] = []
         self.transcript_data: dict[int, dict] = {}
+        self.translation_enabled = True
 
     def _show_banner(self, message: str, *, timeout_ms: int = 2000):
         msg = (message or "").strip()
@@ -216,7 +223,7 @@ class SubtitleDisplay(QWidget):
                 existing.update_translated(translated_text)
         else:
             ts = self.transcript_data[chunk_id]["timestamp"]
-            new_widget = SubtitleItem(chunk_id, ts, original_text, translated_text)
+            new_widget = SubtitleItem(chunk_id, ts, original_text, translated_text, asr_only=not self.translation_enabled)
             insert_idx = len(self.items)
             for i, (cid, _) in enumerate(self.items):
                 if cid > chunk_id:
@@ -252,8 +259,7 @@ class SubtitleDisplay(QWidget):
             existing.update_original_parts(confirmed_text or "", interim_text or "")
         else:
             ts = self.transcript_data[chunk_id]["timestamp"]
-            # Live preview: translation is not available yet.
-            new_widget = SubtitleItem(chunk_id, ts, combined, " ")
+            new_widget = SubtitleItem(chunk_id, ts, combined, " " if self.translation_enabled else "", asr_only=not self.translation_enabled)
             new_widget.update_original_parts(confirmed_text or "", interim_text or "")
 
             insert_idx = len(self.items)
@@ -281,12 +287,11 @@ class SubtitleDisplay(QWidget):
             f.write("=" * 50 + "\n\n")
             for cid in sorted_ids:
                 d = self.transcript_data[cid]
-                f.write(
-                    f"[{d['timestamp']}] (ID: {cid})\n"
-                    f"Original: {d['original']}\n"
-                    f"Translation: {d['translated']}\n"
-                    f"{'-' * 30}\n"
-                )
+                f.write(f"[{d['timestamp']}] (ID: {cid})\n")
+                f.write(f"Original: {d['original']}\n")
+                if d.get("translated"):
+                    f.write(f"Translation: {d['translated']}\n")
+                f.write(f"{'-' * 30}\n")
         return filename
 
     def clear(self):
@@ -782,6 +787,13 @@ class SettingsPopover(QFrame):
         trans_lay.setSpacing(0)
         trans_card.setLayout(trans_lay)
 
+        self.trans_mode_combo = self._combo()
+        self.trans_mode_combo.addItem("Off (ASR only)", "off")
+        self.trans_mode_combo.addItem("Heuristic", "heuristic")
+        self.trans_mode_combo.addItem("LLM", "llm")
+        self.trans_mode_combo.currentIndexChanged.connect(self._on_trans_mode_changed)
+        self._row("Mode", self.trans_mode_combo, trans_lay, hint="off = ASR only, no translation")
+
         self.trans_provider_combo = self._combo()
         self.trans_provider_combo.addItems(list(self._TRANSLATION_PROVIDERS.keys()))
         self.trans_provider_combo.currentTextChanged.connect(self._on_trans_provider_changed)
@@ -890,6 +902,20 @@ class SettingsPopover(QFrame):
         else:
             self.api_key_edit.setPlaceholderText("Type API key (optional)")
 
+    def _on_trans_mode_changed(self, _index: int):
+        """Enable/disable translation fields based on mode."""
+        mode = self.trans_mode_combo.currentData()
+        enabled = mode != "off"
+        for w in (
+            self.trans_provider_combo,
+            self.trans_base_url_edit,
+            self.trans_model_edit,
+            self.trans_api_key_edit,
+            self.trans_test_btn,
+            self.target_lang_combo,
+        ):
+            w.setEnabled(enabled)
+
     def _on_trans_provider_changed(self, preset_name: str):
         """Auto-fill translation LLM fields when provider changes."""
         preset = self._TRANSLATION_PROVIDERS.get(preset_name)
@@ -990,6 +1016,12 @@ class SettingsPopover(QFrame):
 
         # API key (show actual key if set directly, otherwise empty to use env)
         self.api_key_edit.setText("")
+
+        # Translation mode
+        mode_idx = self.trans_mode_combo.findData(cfg.translation_mode)
+        if mode_idx >= 0:
+            self.trans_mode_combo.setCurrentIndex(mode_idx)
+        self._on_trans_mode_changed(0)  # apply enable/disable state
 
         # Translation LLM — match preset by base_url, fallback to Custom
         matched_preset = "Custom"
@@ -1092,7 +1124,9 @@ class SettingsPopover(QFrame):
         )
         self._trans_test_worker.ok.connect(self._on_trans_test_ok)
         self._trans_test_worker.err.connect(self._on_trans_test_err)
-        self._trans_test_worker.finished.connect(lambda: self.trans_test_btn.setEnabled(True))
+        self._trans_test_worker.finished.connect(
+            lambda: self.trans_test_btn.setEnabled(self.trans_mode_combo.currentData() != "off")
+        )
         self._trans_test_worker.finished.connect(self._trans_test_worker.deleteLater)
         self._trans_test_worker.start()
 
@@ -1146,6 +1180,13 @@ class SettingsPopover(QFrame):
             explicit_key = self.api_key_edit.text().strip()
             if explicit_key:
                 cp.set("transcription", "qwen3_asr_realtime_api_key", explicit_key)
+
+        # Translation mode
+        trans_mode = self.trans_mode_combo.currentData() or "llm"
+        cp.set("translation", "mode", trans_mode)
+        # Remove legacy field if present
+        if cp.has_option("translation", "use_llm_segmenter"):
+            cp.remove_option("translation", "use_llm_segmenter")
 
         # Translation LLM
         trans_provider_name = self.trans_provider_combo.currentText()
@@ -1555,6 +1596,7 @@ class SubtitleWindow(QMainWindow):
 
         self.pipeline = pipeline
         self._last_pipeline_error = ""
+        self.subtitle_display.translation_enabled = getattr(pipeline, "translation_mode", "llm") != "off"
         self.subtitle_display.show_status("Starting…", timeout_ms=0)
         self.pipeline.signals.update_text.connect(self.subtitle_display.update_text)
         try:

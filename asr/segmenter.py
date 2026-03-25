@@ -196,15 +196,22 @@ class StreamingSegmenter:
             except Exception:
                 self.token_enc = None
 
-        self.use_llm_segmenter = (
+        _mode = getattr(config, "translation_mode", "llm")
+        self.use_llm = (
             getattr(self.pipeline, "translator", None) is not None
             and hasattr(self.pipeline.translator, "segment_and_translate")
-            and bool(getattr(config, "use_llm_segmenter", False))
+            and _mode == "llm"
         )
+        self.translation_off = (getattr(self.pipeline, "translator", None) is None)
 
         self.translate_executor = ThreadPoolExecutor(max_workers=1)
 
     def shutdown(self) -> None:
+        if self.translation_off:
+            try:
+                self._finalize_source_only()
+            except Exception:
+                pass
         try:
             self.translate_executor.shutdown(wait=False)
         except Exception:
@@ -401,7 +408,11 @@ class StreamingSegmenter:
             self._emit_live(line_id=lid, confirmed=pc, interim=it)
 
     def try_split(self, *, force_flush: bool = False) -> None:
-        if self.use_llm_segmenter:
+        if self.translation_off:
+            if force_flush:
+                self._finalize_source_only()
+            return
+        if self.use_llm:
             return
         self._try_heuristic_split(force_flush=force_flush)
 
@@ -410,7 +421,7 @@ class StreamingSegmenter:
     # ------------------------------------------------------------------
 
     def dispatch_llm_if_needed(self, snapshot: str, *, force_flush: bool = False) -> None:
-        if not self.use_llm_segmenter:
+        if not self.use_llm:
             return
         if not getattr(self.pipeline, "running", False):
             return
@@ -572,7 +583,27 @@ class StreamingSegmenter:
 
         fut.add_done_callback(_on_done)
 
+    def _finalize_source_only(self) -> None:
+        """Emit pending confirmed text as source-only (no translation) and reset state."""
+        with self.state_lock:
+            text = self.pending_confirmed.strip()
+            if not text:
+                return
+            cur_id = self.sentence_id
+            self.pending_confirmed = ""
+            self.interim_text = ""
+            self.sentence_id = cur_id + 1
+            self.last_display = ""
+
+        try:
+            self.pipeline.signals.update_text.emit(cur_id, text, "")
+        except Exception:
+            pass
+
     def flush_pending_local(self) -> None:
+        if self.translation_off:
+            self._finalize_source_only()
+            return
         if getattr(self.pipeline, "translator", None) is None:
             return
 

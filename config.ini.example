@@ -5,8 +5,9 @@ base_url = https://api.deepseek.com/v1
 api_key_env = DEEPSEEK_API_KEY
 model = deepseek-chat
 target_lang = Simplified Chinese
-; Use LLM for segmentation + translation in one call (default: false, uses heuristic segmentation)
-use_llm_segmenter = true
+; Translation mode: off (ASR-only, no translation), heuristic (rule-based segmentation + translation),
+; llm (LLM segmentation + translation in one call)
+mode = llm
 ; LLM sampling temperature (default: 1.0)
 temperature = 1.0
 ; Extra JSON body merged into LLM API calls, e.g. {"thinking": {"type": "disabled"}}

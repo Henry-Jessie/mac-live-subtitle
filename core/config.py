@@ -48,7 +48,8 @@ class Config:
         self.api_key = self._get("translation", "api_key") or os.getenv(api_key_env) or "dummy-key-for-local"
         self.model = self._get("translation", "model", "gpt-3.5-turbo")
         self.target_lang = self._get("translation", "target_lang", "Chinese")
-        self.use_llm_segmenter = self._get("translation", "use_llm_segmenter", "true").lower() == "true"
+        _mode_raw = self._get("translation", "mode", "llm").strip().lower()
+        self.translation_mode = _mode_raw if _mode_raw in ("off", "heuristic", "llm") else "llm"
         self.translation_temperature = self._getfloat("translation", "temperature", 1.0)
         # Extra body for LLM API calls (JSON string, e.g. {"thinking": {"type": "disabled"}})
         _extra_body_raw = self._get("translation", "extra_body", "").strip()
@@ -142,7 +143,7 @@ class Config:
         print(f"  API Key: {self.api_key[:8]}...{self.api_key[-4:] if len(self.api_key) > 12 else '***'}")
         print(f"  Model: {self.model}")
         print(f"  Target Language: {self.target_lang}")
-        print(f"  Use LLM Segmenter: {self.use_llm_segmenter}")
+        print(f"  Translation Mode: {self.translation_mode}")
         print(f"  ASR Backend: {self.asr_backend}")
         print(f"  Deepgram Model: {self.deepgram_model}")
         print(f"  Qwen3 ASR Realtime Model: {self.qwen3_asr_realtime_model}")
