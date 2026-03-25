@@ -197,7 +197,7 @@ class StreamingSegmenter:
 
         self.translation_enabled = getattr(self.pipeline, "translation_enabled", True)
         self.use_llm = (
-            getattr(config, "segmenter_strategy", "llm") == "llm"
+            getattr(self.pipeline, "segmenter_strategy", "llm") == "llm"
             and getattr(self.pipeline, "translator", None) is not None
         )
 
@@ -205,10 +205,7 @@ class StreamingSegmenter:
 
     def shutdown(self) -> None:
         try:
-            if not self.translation_enabled:
-                self._finalize_source_only()
-            else:
-                self.flush_pending_local()
+            self.flush_pending_local()
         except Exception:
             pass
         try:
@@ -596,23 +593,6 @@ class StreamingSegmenter:
             self._emit_live(line_id=lid, confirmed=pc, interim=it)
 
         fut.add_done_callback(_on_done)
-
-    def _finalize_source_only(self) -> None:
-        """Emit pending confirmed text as source-only (no translation) and reset state."""
-        with self.state_lock:
-            text = self.pending_confirmed.strip()
-            if not text:
-                return
-            cur_id = self.sentence_id
-            self.pending_confirmed = ""
-            self.interim_text = ""
-            self.sentence_id = cur_id + 1
-            self.last_display = ""
-
-        try:
-            self.pipeline.signals.update_text.emit(cur_id, text, "")
-        except Exception:
-            pass
 
     def flush_pending_local(self) -> None:
         with self.state_lock:

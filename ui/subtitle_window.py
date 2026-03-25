@@ -650,12 +650,10 @@ class SettingsPopover(QFrame):
             c.setProperty("hintIndent", 8)
         return c
 
-    def _line_edit(self, placeholder: str = "", password: bool = False) -> QLineEdit:
+    def _line_edit(self, placeholder: str = "") -> QLineEdit:
         le = QLineEdit()
         le.setPlaceholderText(placeholder)
         le.setProperty("hintIndent", 8)
-        if password:
-            le.setEchoMode(QLineEdit.EchoMode.Password)
         le.setStyleSheet(
             "QLineEdit { background: #F2F2F7; border: none; border-radius: 6px;"
             "  min-height: 26px;"
@@ -953,8 +951,6 @@ class SettingsPopover(QFrame):
         self._row("Temp", self.temperature_spin, out_lay, last=True, hint="LLM sampling temperature")
         lay.addWidget(out_card)
 
-        # Container widget for enabling/disabling entire page
-        self._translation_page = page
         lay.addStretch()
         return page
 
@@ -1375,11 +1371,6 @@ class SettingsPopover(QFrame):
         self.show()
         self._apply_rounded_corners()
 
-    def hideEvent(self, event):
-        """Auto-save display settings when popover closes."""
-        super().hideEvent(event)
-        self._save_display_settings()
-
     def _apply_rounded_corners(self):
         """Use PyObjC to round the native popup window corners."""
         if not HAS_OBJC:
@@ -1387,7 +1378,6 @@ class SettingsPopover(QFrame):
         try:
             nv = objc.objc_object(c_void_p=c_void_p(int(self.winId())))
             nw = nv.window()
-            # Round the window's root view layer
             root_view = nw.contentView().superview()
             root_view.setWantsLayer_(True)
             root_view.layer().setCornerRadius_(12.0)
@@ -1395,20 +1385,6 @@ class SettingsPopover(QFrame):
             nw.setHasShadow_(True)
         except Exception:
             pass
-
-    def _save_display_settings(self):
-        """Persist display settings to config.ini (called on popover close)."""
-        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.ini")
-        cp = configparser.ConfigParser()
-        cp.read(config_path)
-        if not cp.has_section("display"):
-            cp.add_section("display")
-        cp.set("display", "original_font_size", str(int(self.original_font_spin.value())))
-        cp.set("display", "translated_font_size", str(int(self.translated_font_spin.value())))
-        with open(config_path, "w") as f:
-            cp.write(f)
-        from core.config import config
-        config.reload()
 
 
 # ---------------------------------------------------------------------------

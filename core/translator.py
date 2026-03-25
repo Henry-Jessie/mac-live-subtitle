@@ -52,9 +52,6 @@ class Translator:
         self._context_window = deque()  # (source, translation, token_count)
         self._context_window_tokens = 0
 
-        # Backwards-compatible last pair
-        self.previous_text = ""
-        self.previous_translation = ""
 
         # Static system prompts
         self._translate_system_prompt = (
@@ -208,153 +205,23 @@ class Translator:
         except Exception:
             return self._trim_for_log(str(data), max_len=max_len)
 
-    def segment_and_translate(
-        self,
-        text,
-        *,
-        token_count: int,
-        candidates: list[str] | None = None,
-        draft_continuation: str | None = None,
-        use_context=True,
-        timeout_s=10.0,
-        debug: bool = False,
-    ) -> dict:
-        """
-        Review heuristic candidate segments and translate confirmed ones.
+    def segment_and_translate(self, text, *, token_count, candidates=None, draft_continuation=None,
+                              use_context=True, timeout_s=10.0, debug=False) -> dict:
+        """Segment + translate. Returns {"completed":[{"source","anchor","translation"}]}."""
+        return self._segment_request(text, token_count=token_count, candidates=candidates,
+                                     draft_continuation=draft_continuation, translate=True,
+                                     use_context=use_context, timeout_s=timeout_s, debug=debug)
 
-        Returns:
-            dict: {"completed":[{"source": str, "anchor": str, "translation": str}, ...]}
-        """
-        if not text or not str(text).strip():
-            return {"completed": []}
+    def segment_only(self, text, *, token_count, candidates=None, draft_continuation=None,
+                     timeout_s=10.0, debug=False) -> dict:
+        """Segment without translation. Returns {"completed":[{"source","anchor","translation":""}]}."""
+        return self._segment_request(text, token_count=token_count, candidates=candidates,
+                                     draft_continuation=draft_continuation, translate=False,
+                                     timeout_s=timeout_s, debug=debug)
 
-        try:
-            token_count = int(token_count)
-        except Exception:
-            token_count = 0
-        text_norm = " ".join(str(text).strip().split())
-
-        context_lines = ""
-        if use_context and self._context_window:
-            context_lines = "".join(
-                self._format_context_pair(source, translation)
-                for source, translation, _ in self._context_window
-            ).strip()
-
-        # Build CANDIDATES block
-        candidates_block = ""
-        if candidates:
-            numbered = "\n".join(f"  {i+1}. \"{c}\"" for i, c in enumerate(candidates))
-            candidates_block = f"CANDIDATES (heuristic pre-split):\n{numbered}\n\n"
-
-        draft_norm = ""
-        if draft_continuation and str(draft_continuation).strip():
-            draft_norm = " ".join(str(draft_continuation).strip().split())
-            if len(draft_norm) > 900:
-                draft_norm = draft_norm[:900] + "\u2026"
-
-        user_prompt = (
-            f"TOKEN_COUNT: {token_count}\n"
-            f"TARGET_LANG: {self.target_lang}\n"
-            "TEXT:\n"
-            f"{text_norm}\n\n"
-            + candidates_block
-            + (
-                "DRAFT:\n"
-                f"{draft_norm}\n\n"
-                if draft_norm
-                else "DRAFT:\n(empty)\n\n"
-            )
-            + "CONTEXT:\n"
-            f"{context_lines if context_lines else '(empty)'}\n\n"
-            "Return JSON only."
-        )
-
-        try:
-            if debug:
-                print(
-                    f"[Translator] segment_and_translate token_count={token_count} "
-                    f"use_context={use_context} model={self.model}"
-                )
-                print(f"[Translator] segment_and_translate user_prompt={self._trim_for_log(user_prompt)}")
-
-            create_kwargs = dict(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self._segment_system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=800,
-                timeout=timeout_s,
-                response_format={"type": "json_object"},
-            )
-            if self.extra_body:
-                create_kwargs["extra_body"] = self.extra_body
-            response = self.client.chat.completions.create(**create_kwargs)
-            raw_result = (response.choices[0].message.content or "").strip()
-            if debug:
-                print(f"[Translator] segment_and_translate raw_result={self._trim_for_log(raw_result)}")
-            cleaned = self._strip_thinking(raw_result)
-
-            try:
-                data = json_repair.loads(cleaned)
-            except Exception:
-                if debug:
-                    print(f"[Translator] segment_and_translate json_repair failed cleaned={self._trim_for_log(cleaned)}")
-                return {"completed": []}
-
-            if debug:
-                print(f"[Translator] segment_and_translate parsed_data={self._dump_for_log(data)}")
-
-            if not isinstance(data, dict):
-                return {"completed": []}
-
-            completed = data.get("completed")
-            if not isinstance(completed, list):
-                return {"completed": []}
-
-            normalized: list[dict] = []
-            for item in completed:
-                if not isinstance(item, dict):
-                    continue
-                source = item.get("source")
-                anchor = item.get("anchor")
-                translation = item.get("translation")
-                if not isinstance(source, str) or not isinstance(anchor, str) or not isinstance(translation, str):
-                    continue
-                if not source.strip() or not anchor.strip():
-                    continue
-                normalized.append({"source": source, "anchor": anchor, "translation": translation})
-
-            for item in normalized:
-                src = (item.get("source") or "").strip()
-                tr = (item.get("translation") or "").strip()
-                if src and tr:
-                    self._append_context_pair(src, tr)
-
-            if debug:
-                print(f"[Translator] segment_and_translate normalized={self._dump_for_log({'completed': normalized})}")
-            return {"completed": normalized}
-
-        except OpenAIError as e:
-            print(f"Segment+Translate Error: {e}")
-            return {"completed": []}
-        except Exception as e:
-            print(f"Unexpected Segment+Translate Error: {e}")
-            return {"completed": []}
-
-    def segment_only(
-        self,
-        text,
-        *,
-        token_count: int,
-        candidates: list[str] | None = None,
-        draft_continuation: str | None = None,
-        timeout_s=10.0,
-        debug: bool = False,
-    ) -> dict:
-        """Segment text without translation. Returns {"completed":[{"source","anchor"}]}."""
+    def _segment_request(self, text, *, token_count, candidates=None, draft_continuation=None,
+                         translate=True, use_context=True, timeout_s=10.0, debug=False) -> dict:
+        label = "segment+translate" if translate else "segment_only"
         if not text or not str(text).strip():
             return {"completed": []}
 
@@ -375,28 +242,38 @@ class Translator:
             if len(draft_norm) > 900:
                 draft_norm = draft_norm[:900] + "\u2026"
 
-        user_prompt = (
-            f"TOKEN_COUNT: {token_count}\n"
-            "TEXT:\n"
-            f"{text_norm}\n\n"
-            + candidates_block
-            + ("DRAFT:\n" f"{draft_norm}\n\n" if draft_norm else "DRAFT:\n(empty)\n\n")
-            + "Return JSON only."
-        )
+        # Build user prompt — include context/target only when translating
+        parts = [f"TOKEN_COUNT: {token_count}\n"]
+        if translate:
+            parts.append(f"TARGET_LANG: {self.target_lang}\n")
+        parts.append(f"TEXT:\n{text_norm}\n\n")
+        parts.append(candidates_block)
+        parts.append(f"DRAFT:\n{draft_norm or '(empty)'}\n\n")
+        if translate:
+            context_lines = ""
+            if use_context and self._context_window:
+                context_lines = "".join(
+                    self._format_context_pair(s, t) for s, t, _ in self._context_window
+                ).strip()
+            parts.append(f"CONTEXT:\n{context_lines or '(empty)'}\n\n")
+        parts.append("Return JSON only.")
+        user_prompt = "".join(parts)
+
+        system_prompt = self._segment_system_prompt if translate else self._segment_only_system_prompt
 
         try:
             if debug:
-                print(f"[Translator] segment_only token_count={token_count} model={self.model}")
-                print(f"[Translator] segment_only user_prompt={self._trim_for_log(user_prompt)}")
+                print(f"[Translator] {label} token_count={token_count} model={self.model}")
+                print(f"[Translator] {label} user_prompt={self._trim_for_log(user_prompt)}")
 
             create_kwargs = dict(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": self._segment_only_system_prompt},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=self.temperature,
-                max_tokens=600,
+                max_tokens=800 if translate else 600,
                 timeout=timeout_s,
                 response_format={"type": "json_object"},
             )
@@ -405,14 +282,13 @@ class Translator:
             response = self.client.chat.completions.create(**create_kwargs)
             raw_result = (response.choices[0].message.content or "").strip()
             if debug:
-                print(f"[Translator] segment_only raw_result={self._trim_for_log(raw_result)}")
+                print(f"[Translator] {label} raw_result={self._trim_for_log(raw_result)}")
             cleaned = self._strip_thinking(raw_result)
 
             try:
                 data = json_repair.loads(cleaned)
             except Exception:
                 return {"completed": []}
-
             if not isinstance(data, dict):
                 return {"completed": []}
 
@@ -430,17 +306,29 @@ class Translator:
                     continue
                 if not source.strip() or not anchor.strip():
                     continue
-                normalized.append({"source": source, "anchor": anchor, "translation": ""})
+                tr = ""
+                if translate:
+                    tr = item.get("translation", "")
+                    if not isinstance(tr, str):
+                        continue
+                normalized.append({"source": source, "anchor": anchor, "translation": tr})
+
+            if translate:
+                for item in normalized:
+                    src = (item.get("source") or "").strip()
+                    tr = (item.get("translation") or "").strip()
+                    if src and tr:
+                        self._append_context_pair(src, tr)
 
             if debug:
-                print(f"[Translator] segment_only normalized={self._dump_for_log({'completed': normalized})}")
+                print(f"[Translator] {label} normalized={self._dump_for_log({'completed': normalized})}")
             return {"completed": normalized}
 
         except OpenAIError as e:
-            print(f"Segment-only Error: {e}")
+            print(f"[Translator] {label} error: {e}")
             return {"completed": []}
         except Exception as e:
-            print(f"Unexpected Segment-only Error: {e}")
+            print(f"[Translator] {label} unexpected error: {e}")
             return {"completed": []}
 
     def translate(self, text, use_context=True, *, trailing_context: str | None = None, debug: bool = False):
@@ -505,9 +393,6 @@ class Translator:
                 print(f"[Translator] translate parsed_data={self._dump_for_log(data)}")
                 print(f"[Translator] translate normalized={self._trim_for_log(result)}")
             
-            # Store for next translation context
-            self.previous_text = text
-            self.previous_translation = result
             self._append_context_pair(text, result)
             
             return result
