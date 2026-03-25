@@ -50,3 +50,7 @@ streaming_step_size = 0.2
 
 [display]
 always_on_top = true
+; Font size in px for original (source) text
+original_font_size = 13
+; Font size in px for translated text
+translated_font_size = 17

@@ -34,14 +34,14 @@ except ImportError:
 class SubtitleItem(QFrame):
     """A single subtitle entry showing original text and translation."""
 
-    _ORIGINAL_QSS = "color: #86868B; font-family: 'Helvetica Neue', Arial; font-size: 13px; background: transparent;"
-    _ORIGINAL_QSS_ASR_ONLY = "color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: 17px; background: transparent;"
-
-    def __init__(self, chunk_id: int, timestamp: str, original: str, translated: str = "", *, asr_only: bool = False):
+    def __init__(self, chunk_id: int, timestamp: str, original: str, translated: str = "", *, asr_only: bool = False, orig_font_size: int = 13, trans_font_size: int = 17):
         super().__init__()
         self.chunk_id = chunk_id
         self._asr_only = asr_only
         self.setStyleSheet("background: transparent;")
+
+        orig_size = orig_font_size
+        trans_size = trans_font_size
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 14)
@@ -51,15 +51,20 @@ class SubtitleItem(QFrame):
         self.original_label = QLabel("")
         self.original_label.setTextFormat(Qt.TextFormat.RichText)
         self.original_label.setWordWrap(True)
-        self.original_label.setStyleSheet(
-            self._ORIGINAL_QSS_ASR_ONLY if asr_only else self._ORIGINAL_QSS
-        )
+        if asr_only:
+            self.original_label.setStyleSheet(
+                f"color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: {trans_size}px; background: transparent;"
+            )
+        else:
+            self.original_label.setStyleSheet(
+                f"color: #86868B; font-family: 'Helvetica Neue', Arial; font-size: {orig_size}px; background: transparent;"
+            )
         layout.addWidget(self.original_label)
 
         self.translated_label = QLabel(translated or "...")
         self.translated_label.setWordWrap(True)
         self.translated_label.setStyleSheet(
-            "color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: 17px; font-weight: bold; background: transparent;"
+            f"color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: {trans_size}px; font-weight: bold; background: transparent;"
         )
         layout.addWidget(self.translated_label)
         if asr_only:
@@ -170,6 +175,10 @@ class SubtitleDisplay(QWidget):
         self.transcript_data: dict[int, dict] = {}
         self.translation_enabled = True
 
+        # Runtime display state (used by SubtitleItem, updated by preview/config)
+        self.original_font_size = config.original_font_size
+        self.translated_font_size = config.translated_font_size
+
     def _show_banner(self, message: str, *, timeout_ms: int = 2000):
         msg = (message or "").strip()
         if not msg:
@@ -223,7 +232,7 @@ class SubtitleDisplay(QWidget):
                 existing.update_translated(translated_text)
         else:
             ts = self.transcript_data[chunk_id]["timestamp"]
-            new_widget = SubtitleItem(chunk_id, ts, original_text, translated_text, asr_only=not self.translation_enabled)
+            new_widget = SubtitleItem(chunk_id, ts, original_text, translated_text, asr_only=not self.translation_enabled, orig_font_size=self.original_font_size, trans_font_size=self.translated_font_size)
             insert_idx = len(self.items)
             for i, (cid, _) in enumerate(self.items):
                 if cid > chunk_id:
@@ -259,7 +268,7 @@ class SubtitleDisplay(QWidget):
             existing.update_original_parts(confirmed_text or "", interim_text or "")
         else:
             ts = self.transcript_data[chunk_id]["timestamp"]
-            new_widget = SubtitleItem(chunk_id, ts, combined, " " if self.translation_enabled else "", asr_only=not self.translation_enabled)
+            new_widget = SubtitleItem(chunk_id, ts, combined, " " if self.translation_enabled else "", asr_only=not self.translation_enabled, orig_font_size=self.original_font_size, trans_font_size=self.translated_font_size)
             new_widget.update_original_parts(confirmed_text or "", interim_text or "")
 
             insert_idx = len(self.items)
@@ -481,6 +490,7 @@ class SettingsPopover(QFrame):
     """macOS System Settings-style popup panel."""
 
     settings_saved = pyqtSignal()
+    display_changed = pyqtSignal(int, int)  # (orig_font, trans_font)
 
     # Translation LLM presets: name -> (base_url, api_key_env, model, extra_body_json_or_None)
     _TRANSLATION_PROVIDERS = {
@@ -710,14 +720,93 @@ class SettingsPopover(QFrame):
 
     # ---- Build UI ----
 
+    _TAB_NAMES = ["Transcription", "Translation", "Display"]
+
     def _setup_ui(self):
         layout = QVBoxLayout()
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(14, 10, 14, 14)
         layout.setSpacing(6)
         self.setLayout(layout)
 
-        # ---- Audio section ----
-        layout.addWidget(self._section_title("Audio"))
+        # ---- Segmented control ----
+        seg_frame = QFrame()
+        seg_frame.setFixedHeight(30)
+        seg_frame.setStyleSheet(
+            "QFrame { background: transparent;"
+            "  border: 1px solid rgba(60,60,67,0.18); border-radius: 7px; }"
+        )
+        seg_bar = QHBoxLayout()
+        seg_bar.setSpacing(0)
+        seg_bar.setContentsMargins(1, 1, 1, 1)
+        seg_frame.setLayout(seg_bar)
+        self._tab_buttons: list[QPushButton] = []
+        for i, name in enumerate(self._TAB_NAMES):
+            btn = QPushButton(name)
+            btn.setCheckable(True)
+            if i == 0:
+                radius = "border-radius: 6px 0 0 6px;"
+            elif i == len(self._TAB_NAMES) - 1:
+                radius = "border-radius: 0 6px 6px 0;"
+            else:
+                radius = "border-radius: 0;"
+            btn.setStyleSheet(
+                "QPushButton {"
+                f"  {radius} border: none;"
+                "  background: transparent; color: #6E6E73; font-size: 12px; padding: 0 12px;"
+                "}"
+                "QPushButton:checked {"
+                "  background: #007AFF; color: #FFF;"
+                "}"
+            )
+            btn.clicked.connect(lambda _checked, idx=i: self._switch_tab(idx))
+            seg_bar.addWidget(btn)
+            self._tab_buttons.append(btn)
+        layout.addWidget(seg_frame)
+
+        # ---- Stacked pages ----
+        from PyQt6.QtWidgets import QStackedWidget
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_transcription_page())
+        self._stack.addWidget(self._build_translation_page())
+        self._stack.addWidget(self._build_display_page())
+        layout.addWidget(self._stack, 1)
+
+        # ---- Save button ----
+        layout.addSpacing(4)
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setStyleSheet(
+            "QPushButton { background: #007AFF; color: #FFF; border: none;"
+            "  padding: 8px; border-radius: 10px; font-size: 14px; font-weight: 500; }"
+            "QPushButton:hover { background: #0066D6; }"
+        )
+        self.save_btn.clicked.connect(self._save_config)
+        layout.addWidget(self.save_btn)
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #34C759; font-size: 11px; background: transparent;")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
+
+        # Select first tab
+        self._switch_tab(0)
+
+    def _switch_tab(self, index: int):
+        self._stack.setCurrentIndex(index)
+        for i, btn in enumerate(self._tab_buttons):
+            btn.setChecked(i == index)
+
+    # ---- Page builders ----
+
+    def _build_transcription_page(self) -> QWidget:
+        page = QWidget()
+        page.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout()
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(6)
+        page.setLayout(lay)
+
+        # Audio device
+        lay.addWidget(self._section_title("Audio"))
         audio_card = self._card()
         audio_lay = QVBoxLayout()
         audio_lay.setContentsMargins(0, 0, 0, 0)
@@ -733,80 +822,70 @@ class SettingsPopover(QFrame):
                     self.device_combo.addItem(f"[{i}] {d['name']}", i)
         except Exception:
             pass
-        self._row(
-            "Device",
-            self.device_combo,
-            audio_lay,
-            last=True,
-            hint="Audio input device for capture",
-        )
-        layout.addWidget(audio_card)
+        self._row("Device", self.device_combo, audio_lay, last=True, hint="Audio input device for capture")
+        lay.addWidget(audio_card)
 
-        # ---- Model section ----
-        layout.addWidget(self._section_title("Model"))
-        model_card = self._card()
-        model_lay = QVBoxLayout()
-        model_lay.setContentsMargins(0, 0, 0, 0)
-        model_lay.setSpacing(0)
-        model_card.setLayout(model_lay)
+        # ASR provider
+        lay.addWidget(self._section_title("Speech Recognition"))
+        asr_card = self._card()
+        asr_lay = QVBoxLayout()
+        asr_lay.setContentsMargins(0, 0, 0, 0)
+        asr_lay.setSpacing(0)
+        asr_card.setLayout(asr_lay)
 
         self.provider_combo = self._combo()
         self.provider_combo.addItems(list(self._PROVIDERS.keys()))
         self.provider_combo.currentTextChanged.connect(self._on_provider_changed)
-        self._row(
-            "Provider",
-            self.provider_combo,
-            model_lay,
-            hint="API endpoint for speech recognition",
-        )
+        self._row("Provider", self.provider_combo, asr_lay)
 
         self.model_edit = self._line_edit("e.g. nova-3")
-        self._row(
-            "Model",
-            self.model_edit,
-            model_lay,
-            hint="Model ID (provider-specific)",
-        )
+        self._row("Model", self.model_edit, asr_lay)
 
         api_key_wrap, self.api_key_edit = self._password_with_toggle("")
-        self._row(
-            "API Key",
-            api_key_wrap,
-            model_lay,
-            last=True,
-            hint="Empty uses env var",
-        )
-        self._on_provider_changed(self.provider_combo.currentText())
-        layout.addWidget(model_card)
+        self._row("API Key", api_key_wrap, asr_lay, hint="Empty uses env var")
 
-        # ---- Translation section ----
-        layout.addWidget(self._section_title("Translation"))
-        trans_card = self._card()
-        trans_lay = QVBoxLayout()
-        trans_lay.setContentsMargins(0, 0, 0, 0)
-        trans_lay.setSpacing(0)
-        trans_card.setLayout(trans_lay)
-
+        # Mode (segmentation strategy)
         self.trans_mode_combo = self._combo()
         self.trans_mode_combo.addItem("Off (ASR only)", "off")
         self.trans_mode_combo.addItem("Heuristic", "heuristic")
         self.trans_mode_combo.addItem("LLM", "llm")
         self.trans_mode_combo.currentIndexChanged.connect(self._on_trans_mode_changed)
-        self._row("Mode", self.trans_mode_combo, trans_lay, hint="off = ASR only, no translation")
+        self._row("Mode", self.trans_mode_combo, asr_lay, last=True, hint="off = transcription only")
+        self._on_provider_changed(self.provider_combo.currentText())
+        lay.addWidget(asr_card)
+
+        lay.addStretch()
+        return page
+
+    def _build_translation_page(self) -> QWidget:
+        page = QWidget()
+        page.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout()
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(6)
+        page.setLayout(lay)
+
+        # Translation LLM
+        lay.addWidget(self._section_title("LLM"))
+        llm_card = self._card()
+        llm_lay = QVBoxLayout()
+        llm_lay.setContentsMargins(0, 0, 0, 0)
+        llm_lay.setSpacing(0)
+        llm_card.setLayout(llm_lay)
 
         self.trans_provider_combo = self._combo()
         self.trans_provider_combo.addItems(list(self._TRANSLATION_PROVIDERS.keys()))
         self.trans_provider_combo.currentTextChanged.connect(self._on_trans_provider_changed)
-        self._row("Provider", self.trans_provider_combo, trans_lay, hint="Translation LLM provider")
+        self._row("Provider", self.trans_provider_combo, llm_lay)
 
         self.trans_base_url_edit = self._line_edit("https://api.openai.com/v1")
-        self._row("Base URL", self.trans_base_url_edit, trans_lay)
+        self._row("Base URL", self.trans_base_url_edit, llm_lay)
 
         self.trans_model_edit = self._line_edit("e.g. deepseek-chat")
-        self._row("Model", self.trans_model_edit, trans_lay)
+        self._row("Model", self.trans_model_edit, llm_lay)
 
         trans_key_wrap, self.trans_api_key_edit = self._password_with_toggle("")
-        self._row("API Key", trans_key_wrap, trans_lay, hint="sk-... or $ENV_NAME")
+        self._row("API Key", trans_key_wrap, llm_lay, hint="sk-... or $ENV_NAME")
 
         # Test row
         test_wrap = QWidget()
@@ -832,19 +911,18 @@ class SettingsPopover(QFrame):
 
         test_hlay.addWidget(self.trans_test_btn, 0)
         test_hlay.addWidget(self.trans_test_result, 1)
-
-        self._row("", test_wrap, trans_lay, last=True)
+        self._row("", test_wrap, llm_lay, last=True)
 
         self._on_trans_provider_changed(self.trans_provider_combo.currentText())
-        layout.addWidget(trans_card)
+        lay.addWidget(llm_card)
 
-        # ---- Subtitle section ----
-        layout.addWidget(self._section_title("Subtitle"))
-        sub_card = self._card()
-        sub_lay = QVBoxLayout()
-        sub_lay.setContentsMargins(0, 0, 0, 0)
-        sub_lay.setSpacing(0)
-        sub_card.setLayout(sub_lay)
+        # Target language + temperature
+        lay.addWidget(self._section_title("Output"))
+        out_card = self._card()
+        out_lay = QVBoxLayout()
+        out_lay.setContentsMargins(0, 0, 0, 0)
+        out_lay.setSpacing(0)
+        out_card.setLayout(out_lay)
 
         self.target_lang_combo = self._combo()
         self.target_lang_combo.addItems(
@@ -858,30 +936,54 @@ class SettingsPopover(QFrame):
         self._target_lang_pre_custom_index = self._target_lang_last_valid_index
         self._target_lang_custom_mode = False
         self.target_lang_combo.activated.connect(self._on_target_lang_activated)
-        self._row(
-            "Target",
-            self.target_lang_combo,
-            sub_lay,
-            last=True,
-            hint="Language for translation output",
-        )
-        layout.addWidget(sub_card)
+        self._row("Target", self.target_lang_combo, out_lay, hint="Language for translation output")
 
-        # ---- Save button ----
-        layout.addSpacing(4)
-        self.save_btn = QPushButton("Save")
-        self.save_btn.setStyleSheet(
-            "QPushButton { background: #007AFF; color: #FFF; border: none;"
-            "  padding: 8px; border-radius: 10px; font-size: 14px; font-weight: 500; }"
-            "QPushButton:hover { background: #0066D6; }"
-        )
-        self.save_btn.clicked.connect(self._save_config)
-        layout.addWidget(self.save_btn)
+        self.temperature_spin = self._spin(0.0, 2.0, 0.1, "")
+        self._row("Temp", self.temperature_spin, out_lay, last=True, hint="LLM sampling temperature")
+        lay.addWidget(out_card)
 
-        self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #34C759; font-size: 11px; background: transparent;")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.status_label)
+        # Container widget for enabling/disabling entire page
+        self._translation_page = page
+        lay.addStretch()
+        return page
+
+    def _build_display_page(self) -> QWidget:
+        page = QWidget()
+        page.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout()
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(6)
+        page.setLayout(lay)
+
+        lay.addWidget(self._section_title("Font Size"))
+        font_card = self._card()
+        font_lay = QVBoxLayout()
+        font_lay.setContentsMargins(0, 0, 0, 0)
+        font_lay.setSpacing(0)
+        font_card.setLayout(font_lay)
+
+        self.original_font_spin = self._spin(10, 30, 1, " px")
+        self.original_font_spin.setDecimals(0)
+        self._row("Original", self.original_font_spin, font_lay, hint="Source text font size")
+
+        self.translated_font_spin = self._spin(10, 30, 1, " px")
+        self.translated_font_spin.setDecimals(0)
+        self._row("Translated", self.translated_font_spin, font_lay, last=True, hint="Translation font size")
+        lay.addWidget(font_card)
+
+        # Live preview
+        for spin in (self.original_font_spin, self.translated_font_spin):
+            spin.valueChanged.connect(self._emit_display_changed)
+
+        lay.addStretch()
+        return page
+
+    def _emit_display_changed(self):
+        self.display_changed.emit(
+            int(self.original_font_spin.value()),
+            int(self.translated_font_spin.value()),
+        )
+
 
     def _on_provider_changed(self, provider_name: str):
         """Auto-fill model and API key hint when provider changes."""
@@ -903,18 +1005,10 @@ class SettingsPopover(QFrame):
             self.api_key_edit.setPlaceholderText("Type API key (optional)")
 
     def _on_trans_mode_changed(self, _index: int):
-        """Enable/disable translation fields based on mode."""
+        """Enable/disable translation page based on mode."""
         mode = self.trans_mode_combo.currentData()
-        enabled = mode != "off"
-        for w in (
-            self.trans_provider_combo,
-            self.trans_base_url_edit,
-            self.trans_model_edit,
-            self.trans_api_key_edit,
-            self.trans_test_btn,
-            self.target_lang_combo,
-        ):
-            w.setEnabled(enabled)
+        if hasattr(self, "_translation_page"):
+            self._translation_page.setEnabled(mode != "off")
 
     def _on_trans_provider_changed(self, preset_name: str):
         """Auto-fill translation LLM fields when provider changes."""
@@ -1071,6 +1165,13 @@ class SettingsPopover(QFrame):
         self._target_lang_pre_custom_text = self._target_lang_last_valid_text
         self._target_lang_pre_custom_index = self._target_lang_last_valid_index
 
+        # Temperature
+        self.temperature_spin.setValue(cfg.translation_temperature)
+
+        # Display settings
+        self.original_font_spin.setValue(cfg.original_font_size)
+        self.translated_font_spin.setValue(cfg.translated_font_size)
+
     # ---- Translation test ----
 
     def _resolve_translation_api_key_from_ui(self) -> str:
@@ -1225,16 +1326,25 @@ class SettingsPopover(QFrame):
         elif cp.has_option("translation", "api_key"):
             cp.remove_option("translation", "api_key")
 
-        # Subtitle
+        # Target language
         target_lang = (self.target_lang_combo.currentText() or "").strip()
         if not target_lang or target_lang == "Custom...":
             target_lang = (getattr(self, "_target_lang_last_valid_text", "") or "Simplified Chinese").strip()
         cp.set("translation", "target_lang", target_lang)
 
+        # Temperature
+        cp.set("translation", "temperature", str(self.temperature_spin.value()))
+
+        # Display settings
+        if not cp.has_section("display"):
+            cp.add_section("display")
+        cp.set("display", "original_font_size", str(int(self.original_font_spin.value())))
+        cp.set("display", "translated_font_size", str(int(self.translated_font_spin.value())))
+
         with open(config_path, "w") as f:
             cp.write(f)
 
-        self.status_label.setText("Saved! Click Start to apply.")
+        self.status_label.setText("Saved! Restart to apply ASR/translation changes.")
         QTimer.singleShot(3000, lambda: self.status_label.setText(""))
         self.settings_saved.emit()
 
@@ -1246,6 +1356,11 @@ class SettingsPopover(QFrame):
         self.move(x, y)
         self.show()
         self._apply_rounded_corners()
+
+    def hideEvent(self, event):
+        """Auto-save display settings when popover closes."""
+        super().hideEvent(event)
+        self._save_display_settings()
 
     def _apply_rounded_corners(self):
         """Use PyObjC to round the native popup window corners."""
@@ -1262,6 +1377,20 @@ class SettingsPopover(QFrame):
             nw.setHasShadow_(True)
         except Exception:
             pass
+
+    def _save_display_settings(self):
+        """Persist display settings to config.ini (called on popover close)."""
+        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.ini")
+        cp = configparser.ConfigParser()
+        cp.read(config_path)
+        if not cp.has_section("display"):
+            cp.add_section("display")
+        cp.set("display", "original_font_size", str(int(self.original_font_spin.value())))
+        cp.set("display", "translated_font_size", str(int(self.translated_font_spin.value())))
+        with open(config_path, "w") as f:
+            cp.write(f)
+        from core.config import config
+        config.reload()
 
 
 # ---------------------------------------------------------------------------
@@ -1659,17 +1788,30 @@ class SubtitleWindow(QMainWindow):
         if self._popover is None:
             self._popover = SettingsPopover()
             self._popover.settings_saved.connect(self._on_settings_saved)
+            self._popover.display_changed.connect(self._on_display_preview)
 
         from core.config import config
         self._popover.load_from_config(config)
         self._popover.show_relative_to(self.settings_btn)
 
+    def _on_display_preview(self, orig_font: int, trans_font: int):
+        """Live preview of display settings."""
+        self.subtitle_display.original_font_size = orig_font
+        self.subtitle_display.translated_font_size = trans_font
+        for _, widget in self.subtitle_display.items:
+            if widget._asr_only:
+                widget.original_label.setStyleSheet(
+                    f"color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: {trans_font}px; background: transparent;"
+                )
+            else:
+                widget.original_label.setStyleSheet(
+                    f"color: #86868B; font-family: 'Helvetica Neue', Arial; font-size: {orig_font}px; background: transparent;"
+                )
+                widget.translated_label.setStyleSheet(
+                    f"color: #1D1D1F; font-family: 'Helvetica Neue', Arial; font-size: {trans_font}px; font-weight: bold; background: transparent;"
+                )
+
     def _on_settings_saved(self):
-        if self.pipeline:
-            self._kill_pipeline()
-            self.is_running = False
-            self._paused = False
-            self._style_transport_buttons(state="idle")
         from core.config import config
         config.reload()
 

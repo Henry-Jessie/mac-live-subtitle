@@ -101,6 +101,8 @@ class Config:
         
         # Display settings
         self.always_on_top = self._get("display", "always_on_top", "true").lower() == "true"
+        self.original_font_size = self._getint("display", "original_font_size", 13)
+        self.translated_font_size = self._getint("display", "translated_font_size", 17)
     
     def _get(self, section, key, fallback=""):
         try:
