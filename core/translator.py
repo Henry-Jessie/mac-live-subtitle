@@ -128,9 +128,50 @@ class Translator:
             "→ merge into one item: source=\"Yes. I agree.\"\n"
         )
 
+        self._segment_only_system_prompt = (
+            "You are a real-time subtitle segmenter.\n\n"
+            "You will receive:\n"
+            "- TOKEN_COUNT: approximate token length of TEXT\n"
+            "- TEXT: a growing transcript buffer from live speech recognition\n"
+            "- CANDIDATES: ordered list of segments pre-split from TEXT by a heuristic algorithm\n"
+            "- DRAFT: unconfirmed ASR draft that may follow TEXT (use ONLY for disambiguation)\n\n"
+            "IMPORTANT: TEXT is a snapshot of an ongoing speech buffer. "
+            "It may end mid-sentence. Any text you do NOT consume stays in the buffer "
+            "and will be included in the next call with more words appended.\n\n"
+            "Return ONLY valid JSON (no markdown fences, no explanation).\n\n"
+            "Schema:\n"
+            "{\n"
+            "  \"completed\": [\n"
+            "    { \"source\": \"...\", \"anchor\": \"...\" }\n"
+            "  ]\n"
+            "}\n\n"
+            "Rules:\n\n"
+            "REVIEW — decide which candidates to emit:\n"
+            "  CANDIDATES are proposed split points. Your job is to decide how many "
+            "to emit from the front of the list (0, some, or all).\n"
+            "  • Emit a candidate if it is a complete, self-contained unit.\n"
+            "  • HOLD a candidate (do NOT emit) if DRAFT shows the candidate is "
+            "incomplete.\n"
+            "  • You may MERGE adjacent candidates into one `completed` item if they "
+            "form a single short sentence (keep subtitle readability).\n"
+            "  • If CANDIDATES is empty, fall back to scanning TEXT directly "
+            "(still use DRAFT for disambiguation):\n"
+            "    - Emit up to the last sentence-ending punctuation (.!?。！？).\n"
+            "    - If none and TOKEN_COUNT > 18, emit up to the last clause punctuation.\n"
+            "    - Otherwise return {\"completed\": []}.\n\n"
+            "HARD CONSTRAINTS:\n"
+            "  • NEVER consume or include any part of DRAFT in source.\n"
+            "  • NEVER rewrite, rephrase, or insert/remove characters in source — copy verbatim from TEXT.\n"
+            "  • completed items must consume TEXT from the beginning in order, with no gaps.\n\n"
+            "COPYING — how to fill each item:\n"
+            "  1. `source`: copied character-for-character from TEXT.\n"
+            "  2. `anchor`: the last 5-8 words of `source`, copied verbatim.\n"
+        )
+
         if debug:
             print(f"[Translator] translate system_prompt:\n{self._translate_system_prompt}")
             print(f"[Translator] segment_and_translate system_prompt:\n{self._segment_system_prompt}")
+            print(f"[Translator] segment_only system_prompt:\n{self._segment_only_system_prompt}")
 
     def _count_tokens(self, text):
         return len(self._encoding.encode(text))
@@ -301,6 +342,105 @@ class Translator:
             return {"completed": []}
         except Exception as e:
             print(f"Unexpected Segment+Translate Error: {e}")
+            return {"completed": []}
+
+    def segment_only(
+        self,
+        text,
+        *,
+        token_count: int,
+        candidates: list[str] | None = None,
+        draft_continuation: str | None = None,
+        timeout_s=10.0,
+        debug: bool = False,
+    ) -> dict:
+        """Segment text without translation. Returns {"completed":[{"source","anchor"}]}."""
+        if not text or not str(text).strip():
+            return {"completed": []}
+
+        try:
+            token_count = int(token_count)
+        except Exception:
+            token_count = 0
+        text_norm = " ".join(str(text).strip().split())
+
+        candidates_block = ""
+        if candidates:
+            numbered = "\n".join(f"  {i+1}. \"{c}\"" for i, c in enumerate(candidates))
+            candidates_block = f"CANDIDATES (heuristic pre-split):\n{numbered}\n\n"
+
+        draft_norm = ""
+        if draft_continuation and str(draft_continuation).strip():
+            draft_norm = " ".join(str(draft_continuation).strip().split())
+            if len(draft_norm) > 900:
+                draft_norm = draft_norm[:900] + "\u2026"
+
+        user_prompt = (
+            f"TOKEN_COUNT: {token_count}\n"
+            "TEXT:\n"
+            f"{text_norm}\n\n"
+            + candidates_block
+            + ("DRAFT:\n" f"{draft_norm}\n\n" if draft_norm else "DRAFT:\n(empty)\n\n")
+            + "Return JSON only."
+        )
+
+        try:
+            if debug:
+                print(f"[Translator] segment_only token_count={token_count} model={self.model}")
+                print(f"[Translator] segment_only user_prompt={self._trim_for_log(user_prompt)}")
+
+            create_kwargs = dict(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self._segment_only_system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=600,
+                timeout=timeout_s,
+                response_format={"type": "json_object"},
+            )
+            if self.extra_body:
+                create_kwargs["extra_body"] = self.extra_body
+            response = self.client.chat.completions.create(**create_kwargs)
+            raw_result = (response.choices[0].message.content or "").strip()
+            if debug:
+                print(f"[Translator] segment_only raw_result={self._trim_for_log(raw_result)}")
+            cleaned = self._strip_thinking(raw_result)
+
+            try:
+                data = json_repair.loads(cleaned)
+            except Exception:
+                return {"completed": []}
+
+            if not isinstance(data, dict):
+                return {"completed": []}
+
+            completed = data.get("completed")
+            if not isinstance(completed, list):
+                return {"completed": []}
+
+            normalized: list[dict] = []
+            for item in completed:
+                if not isinstance(item, dict):
+                    continue
+                source = item.get("source")
+                anchor = item.get("anchor")
+                if not isinstance(source, str) or not isinstance(anchor, str):
+                    continue
+                if not source.strip() or not anchor.strip():
+                    continue
+                normalized.append({"source": source, "anchor": anchor, "translation": ""})
+
+            if debug:
+                print(f"[Translator] segment_only normalized={self._dump_for_log({'completed': normalized})}")
+            return {"completed": normalized}
+
+        except OpenAIError as e:
+            print(f"Segment-only Error: {e}")
+            return {"completed": []}
+        except Exception as e:
+            print(f"Unexpected Segment-only Error: {e}")
             return {"completed": []}
 
     def translate(self, text, use_context=True, *, trailing_context: str | None = None, debug: bool = False):

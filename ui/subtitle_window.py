@@ -845,12 +845,10 @@ class SettingsPopover(QFrame):
         self._row("API Key", api_key_wrap, asr_lay, hint="Empty uses env var")
 
         # Mode (segmentation strategy)
-        self.trans_mode_combo = self._combo()
-        self.trans_mode_combo.addItem("Off (ASR only)", "off")
-        self.trans_mode_combo.addItem("Heuristic", "heuristic")
-        self.trans_mode_combo.addItem("LLM", "llm")
-        self.trans_mode_combo.currentIndexChanged.connect(self._on_trans_mode_changed)
-        self._row("Mode", self.trans_mode_combo, asr_lay, last=True, hint="off = transcription only")
+        self.segmenter_combo = self._combo()
+        self.segmenter_combo.addItem("Heuristic", "heuristic")
+        self.segmenter_combo.addItem("LLM", "llm")
+        self._row("Segmenter", self.segmenter_combo, asr_lay, last=True, hint="Sentence splitting strategy")
         self._on_provider_changed(self.provider_combo.currentText())
         lay.addWidget(asr_card)
 
@@ -864,6 +862,19 @@ class SettingsPopover(QFrame):
         lay.setContentsMargins(0, 6, 0, 0)
         lay.setSpacing(6)
         page.setLayout(lay)
+
+        # Enable toggle
+        self.trans_enabled_combo = self._combo()
+        self.trans_enabled_combo.addItem("Enabled", True)
+        self.trans_enabled_combo.addItem("Disabled", False)
+        self.trans_enabled_combo.currentIndexChanged.connect(self._on_trans_enabled_changed)
+        enable_card = self._card()
+        enable_lay = QVBoxLayout()
+        enable_lay.setContentsMargins(0, 0, 0, 0)
+        enable_lay.setSpacing(0)
+        enable_card.setLayout(enable_lay)
+        self._row("Translate", self.trans_enabled_combo, enable_lay, last=True)
+        lay.addWidget(enable_card)
 
         # Translation LLM
         lay.addWidget(self._section_title("LLM"))
@@ -1004,11 +1015,11 @@ class SettingsPopover(QFrame):
         else:
             self.api_key_edit.setPlaceholderText("Type API key (optional)")
 
-    def _on_trans_mode_changed(self, _index: int):
-        """Enable/disable translation page based on mode."""
-        mode = self.trans_mode_combo.currentData()
-        if hasattr(self, "_translation_page"):
-            self._translation_page.setEnabled(mode != "off")
+    def _on_trans_enabled_changed(self, _index: int):
+        """Enable/disable translation-specific fields based on enabled state."""
+        enabled = self.trans_enabled_combo.currentData()
+        for w in (self.target_lang_combo, self.temperature_spin):
+            w.setEnabled(bool(enabled))
 
     def _on_trans_provider_changed(self, preset_name: str):
         """Auto-fill translation LLM fields when provider changes."""
@@ -1111,11 +1122,16 @@ class SettingsPopover(QFrame):
         # API key (show actual key if set directly, otherwise empty to use env)
         self.api_key_edit.setText("")
 
-        # Translation mode
-        mode_idx = self.trans_mode_combo.findData(cfg.translation_mode)
-        if mode_idx >= 0:
-            self.trans_mode_combo.setCurrentIndex(mode_idx)
-        self._on_trans_mode_changed(0)  # apply enable/disable state
+        # Segmenter strategy
+        seg_idx = self.segmenter_combo.findData(cfg.segmenter_strategy)
+        if seg_idx >= 0:
+            self.segmenter_combo.setCurrentIndex(seg_idx)
+
+        # Translation enabled
+        en_idx = self.trans_enabled_combo.findData(cfg.translation_enabled)
+        if en_idx >= 0:
+            self.trans_enabled_combo.setCurrentIndex(en_idx)
+        self._on_trans_enabled_changed(0)
 
         # Translation LLM — match preset by base_url, fallback to Custom
         matched_preset = "Custom"
@@ -1226,7 +1242,7 @@ class SettingsPopover(QFrame):
         self._trans_test_worker.ok.connect(self._on_trans_test_ok)
         self._trans_test_worker.err.connect(self._on_trans_test_err)
         self._trans_test_worker.finished.connect(
-            lambda: self.trans_test_btn.setEnabled(self.trans_mode_combo.currentData() != "off")
+            lambda: self.trans_test_btn.setEnabled(True)
         )
         self._trans_test_worker.finished.connect(self._trans_test_worker.deleteLater)
         self._trans_test_worker.start()
@@ -1283,11 +1299,13 @@ class SettingsPopover(QFrame):
                 cp.set("transcription", "qwen3_asr_realtime_api_key", explicit_key)
 
         # Translation mode
-        trans_mode = self.trans_mode_combo.currentData() or "llm"
-        cp.set("translation", "mode", trans_mode)
-        # Remove legacy field if present
-        if cp.has_option("translation", "use_llm_segmenter"):
-            cp.remove_option("translation", "use_llm_segmenter")
+        # Translation enabled + segmenter strategy
+        cp.set("translation", "enabled", "true" if self.trans_enabled_combo.currentData() else "false")
+        cp.set("translation", "segmenter", self.segmenter_combo.currentData() or "llm")
+        # Remove legacy fields
+        for legacy in ("mode", "use_llm_segmenter"):
+            if cp.has_option("translation", legacy):
+                cp.remove_option("translation", legacy)
 
         # Translation LLM
         trans_provider_name = self.trans_provider_combo.currentText()
@@ -1725,7 +1743,7 @@ class SubtitleWindow(QMainWindow):
 
         self.pipeline = pipeline
         self._last_pipeline_error = ""
-        self.subtitle_display.translation_enabled = getattr(pipeline, "translation_mode", "llm") != "off"
+        self.subtitle_display.translation_enabled = getattr(pipeline, "translation_enabled", True)
         self.subtitle_display.show_status("Starting…", timeout_ms=0)
         self.pipeline.signals.update_text.connect(self.subtitle_display.update_text)
         try:

@@ -48,8 +48,9 @@ class Config:
         self.api_key = self._get("translation", "api_key") or os.getenv(api_key_env) or "dummy-key-for-local"
         self.model = self._get("translation", "model", "gpt-3.5-turbo")
         self.target_lang = self._get("translation", "target_lang", "Chinese")
-        _mode_raw = self._get("translation", "mode", "llm").strip().lower()
-        self.translation_mode = _mode_raw if _mode_raw in ("off", "heuristic", "llm") else "llm"
+        self.translation_enabled = self._get("translation", "enabled", "true").strip().lower() in ("true", "1", "yes")
+        _seg_raw = self._get("translation", "segmenter", "llm").strip().lower()
+        self.segmenter_strategy = _seg_raw if _seg_raw in ("heuristic", "llm") else "llm"
         self.translation_temperature = self._getfloat("translation", "temperature", 1.0)
         # Extra body for LLM API calls (JSON string, e.g. {"thinking": {"type": "disabled"}})
         _extra_body_raw = self._get("translation", "extra_body", "").strip()
@@ -145,7 +146,8 @@ class Config:
         print(f"  API Key: {self.api_key[:8]}...{self.api_key[-4:] if len(self.api_key) > 12 else '***'}")
         print(f"  Model: {self.model}")
         print(f"  Target Language: {self.target_lang}")
-        print(f"  Translation Mode: {self.translation_mode}")
+        print(f"  Translation Enabled: {self.translation_enabled}")
+        print(f"  Segmenter Strategy: {self.segmenter_strategy}")
         print(f"  ASR Backend: {self.asr_backend}")
         print(f"  Deepgram Model: {self.deepgram_model}")
         print(f"  Qwen3 ASR Realtime Model: {self.qwen3_asr_realtime_model}")

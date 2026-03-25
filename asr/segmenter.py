@@ -186,32 +186,31 @@ class StreamingSegmenter:
             self.translation_debug = False
 
         self.token_enc = None
-        if getattr(self.pipeline, "translator", None) is not None:
-            try:
-                import tiktoken
+        try:
+            import tiktoken
+            if getattr(self.pipeline, "translator", None) is not None:
+                self.token_enc = getattr(self.pipeline.translator, "_encoding", None)
+            if self.token_enc is None:
+                self.token_enc = tiktoken.get_encoding("o200k_base")
+        except Exception:
+            self.token_enc = None
 
-                self.token_enc = getattr(self.pipeline.translator, "_encoding", None) or tiktoken.get_encoding(
-                    "o200k_base"
-                )
-            except Exception:
-                self.token_enc = None
-
-        _mode = getattr(config, "translation_mode", "llm")
+        self.translation_enabled = getattr(self.pipeline, "translation_enabled", True)
         self.use_llm = (
-            getattr(self.pipeline, "translator", None) is not None
-            and hasattr(self.pipeline.translator, "segment_and_translate")
-            and _mode == "llm"
+            getattr(config, "segmenter_strategy", "llm") == "llm"
+            and getattr(self.pipeline, "translator", None) is not None
         )
-        self.translation_off = (getattr(self.pipeline, "translator", None) is None)
 
         self.translate_executor = ThreadPoolExecutor(max_workers=1)
 
     def shutdown(self) -> None:
-        if self.translation_off:
-            try:
+        try:
+            if not self.translation_enabled:
                 self._finalize_source_only()
-            except Exception:
-                pass
+            else:
+                self.flush_pending_local()
+        except Exception:
+            pass
         try:
             self.translate_executor.shutdown(wait=False)
         except Exception:
@@ -327,7 +326,7 @@ class StreamingSegmenter:
     # ------------------------------------------------------------------
 
     def _try_heuristic_split(self, *, force_flush: bool = False) -> None:
-        if getattr(self.pipeline, "translator", None) is None or self.token_enc is None:
+        if self.token_enc is None:
             return
 
         token_enc = self.token_enc
@@ -383,18 +382,24 @@ class StreamingSegmenter:
                         self.last_display = ""
                 continue
 
-            trailing_context = (remainder_confirmed + " " + (cur_interim or "")).strip()
-            if trailing_context and len(trailing_context) > 900:
-                trailing_context = trailing_context[:900] + "\u2026"
-
-            try:
-                self.pipeline.signals.update_text.emit(cur_id, seg, "(translating...)")
-            except Exception:
-                pass
-            try:
-                translate_executor.submit(self.pipeline._run_translation, seg, cur_id, trailing_context or None)
-            except Exception:
-                pass
+            if self.translation_enabled and getattr(self.pipeline, "translator", None) is not None:
+                trailing_context = (remainder_confirmed + " " + (cur_interim or "")).strip()
+                if trailing_context and len(trailing_context) > 900:
+                    trailing_context = trailing_context[:900] + "\u2026"
+                try:
+                    self.pipeline.signals.update_text.emit(cur_id, seg, "(translating...)")
+                except Exception:
+                    pass
+                try:
+                    translate_executor.submit(self.pipeline._run_translation, seg, cur_id, trailing_context or None)
+                except Exception:
+                    pass
+            else:
+                # Source-only: emit segment without translation
+                try:
+                    self.pipeline.signals.update_text.emit(cur_id, seg, "")
+                except Exception:
+                    pass
 
             with self.state_lock:
                 if self.pending_confirmed != buf0:
@@ -408,10 +413,6 @@ class StreamingSegmenter:
             self._emit_live(line_id=lid, confirmed=pc, interim=it)
 
     def try_split(self, *, force_flush: bool = False) -> None:
-        if self.translation_off:
-            if force_flush:
-                self._finalize_source_only()
-            return
         if self.use_llm:
             return
         self._try_heuristic_split(force_flush=force_flush)
@@ -462,15 +463,25 @@ class StreamingSegmenter:
         )
 
         def _job():
-            return self.pipeline.translator.segment_and_translate(
-                snap,
-                token_count=tok,
-                candidates=candidates,
-                draft_continuation=draft,
-                use_context=True,
-                timeout_s=10.0,
-                debug=self.translation_debug,
-            )
+            if self.translation_enabled:
+                return self.pipeline.translator.segment_and_translate(
+                    snap,
+                    token_count=tok,
+                    candidates=candidates,
+                    draft_continuation=draft,
+                    use_context=True,
+                    timeout_s=10.0,
+                    debug=self.translation_debug,
+                )
+            else:
+                return self.pipeline.translator.segment_only(
+                    snap,
+                    token_count=tok,
+                    candidates=candidates,
+                    draft_continuation=draft,
+                    timeout_s=10.0,
+                    debug=self.translation_debug,
+                )
 
         fut = self.translate_executor.submit(_job)
 
@@ -501,7 +512,10 @@ class StreamingSegmenter:
                 cut_end = self._local_cut_end(snap)
                 seg = snap[:cut_end].strip() if cut_end > 0 else ""
                 if seg:
-                    tr = self.pipeline.translator.translate(seg, debug=self.translation_debug)
+                    if self.translation_enabled:
+                        tr = self.pipeline.translator.translate(seg, debug=self.translation_debug)
+                    else:
+                        tr = ""
                     try:
                         self.pipeline.signals.update_text.emit(cur_sentence_id, seg, (tr or "").strip())
                     except Exception:
@@ -601,12 +615,6 @@ class StreamingSegmenter:
             pass
 
     def flush_pending_local(self) -> None:
-        if self.translation_off:
-            self._finalize_source_only()
-            return
-        if getattr(self.pipeline, "translator", None) is None:
-            return
-
         with self.state_lock:
             self.llm_in_flight = False
             self.llm_snapshot = ""
@@ -622,7 +630,9 @@ class StreamingSegmenter:
             seg = s[:cut_end].strip() if cut_end > 0 else ""
             if not seg:
                 break
-            tr = self.pipeline.translator.translate(seg, debug=self.translation_debug)
+            tr = ""
+            if self.translation_enabled and getattr(self.pipeline, "translator", None) is not None:
+                tr = self.pipeline.translator.translate(seg, debug=self.translation_debug)
             try:
                 self.pipeline.signals.update_text.emit(cur_id, seg, (tr or "").strip())
             except Exception:

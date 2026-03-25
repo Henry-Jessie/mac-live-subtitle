@@ -31,9 +31,12 @@ class Pipeline(QObject):
             step_size=config.streaming_step_size,
         )
 
-        self.translation_mode = config.translation_mode
+        self.translation_enabled = config.translation_enabled
+        self.segmenter_strategy = config.segmenter_strategy
 
-        if self.translation_mode != "off":
+        # LLM client needed when translation is on OR segmenter is LLM
+        need_llm = config.translation_enabled or config.segmenter_strategy == "llm"
+        if need_llm:
             self.translator = Translator(
                 target_lang=config.target_lang,
                 base_url=config.api_base_url,
