@@ -1266,7 +1266,8 @@ class TranslationTestWorker(QThread):
             import httpx
             from openai import OpenAI
 
-            http_client = httpx.Client(verify=False)
+            from core.config import is_local_url
+            http_client = httpx.Client(verify=not is_local_url(self.base_url))
             try:
                 client = OpenAI(
                     api_key=self.api_key,

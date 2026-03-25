@@ -1,5 +1,30 @@
 import configparser
+import ipaddress
 import os
+from urllib.parse import urlparse
+
+
+def is_local_url(base_url: str | None) -> bool:
+    """Return True if *base_url* points to a loopback or unspecified address.
+
+    Covers localhost, the full 127.0.0.0/8 range, IPv6 loopback (::1),
+    unspecified addresses (0.0.0.0, ::), and IPv6-mapped loopback
+    (e.g. ::ffff:127.0.0.1).
+    """
+    if not base_url:
+        return False
+    try:
+        host = urlparse(base_url).hostname or ""
+    except Exception:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+        return addr.is_loopback or addr.is_unspecified
+    except ValueError:
+        return False
+
 
 class Config:
     """Centralized configuration loaded from config.ini"""

@@ -7,6 +7,8 @@ import tiktoken
 import json
 import json_repair
 
+from core.config import is_local_url
+
 class Translator:
     def __init__(self, api_key=None, base_url=None, model="MBZUAI-IFM/K2-Think-nothink", target_lang="Chinese", extra_body=None, temperature=1.0, debug=False):
         """
@@ -32,9 +34,10 @@ class Translator:
             base_url = os.getenv("OPENAI_BASE_URL")
 
         self.base_url = base_url
-        
-        # Create HTTP client with SSL verification disabled (for self-signed certs)
-        http_client = httpx.Client(verify=False)
+
+        # Only disable SSL verification for local servers (Ollama, LM Studio, etc.)
+        verify_ssl = not is_local_url(base_url)
+        http_client = httpx.Client(verify=verify_ssl)
         self.client = OpenAI(api_key=api_key, base_url=base_url, http_client=http_client)
         
         # Logging
