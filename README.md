@@ -49,10 +49,12 @@ No local model, no GPU required. Two backends available:
 
 ### Hybrid Subtitle Segmentation
 
-Two modes controlled by `use_llm_segmenter` in config:
+Segmentation strategy and translation are independent controls (`segmenter` and `enabled` in config):
 
-- **LLM mode** (default) — a heuristic splitter proposes candidate segments, then an LLM reviews them: merging short fragments, holding incomplete segments when the ASR draft suggests more words are coming, and translating confirmed ones in a single call. Slightly higher latency, but handles edge cases (mid-sentence decimals, trailing abbreviations, numbering artifacts) that pure heuristics miss.
-- **Heuristic-only mode** — only the rule-based splitter runs, each segment translated separately. Lowest latency, but occasional awkward breaks.
+- **LLM segmenter** (default) — a heuristic splitter proposes candidate segments, then an LLM reviews them: merging short fragments, holding incomplete segments when the ASR draft suggests more words are coming. Slightly higher latency, but handles edge cases (mid-sentence decimals, trailing abbreviations, numbering artifacts) that pure heuristics miss.
+- **Heuristic segmenter** — only the rule-based splitter runs. Lowest latency, but occasional awkward breaks.
+
+Translation can be toggled independently — when disabled, segmented source text is displayed without translation (ASR-only mode). Both segmenters work in either mode.
 
 ### Context-aware Translation
 
@@ -61,7 +63,7 @@ A sliding context window (capped by token count) feeds recent source/translation
 ### Single-window macOS-native UI
 
 - Unified PyQt6 window with play/pause/stop controls
-- Settings popover with provider presets (DeepSeek, Google Gemini, Custom)
+- Tabbed settings popover (Transcription / Translation / Display) with provider presets, configurable font sizes, and live preview
 - Pushpin button for always-on-top, visible across all macOS Spaces via PyObjC
 - Soft pause/resume (keeps WebSocket alive) and automatic reconnection with exponential backoff
 
@@ -84,7 +86,7 @@ To capture system audio you need [BlackHole](https://existential.audio/blackhole
 
 ## Usage
 
-Run `python app.py`. Use **Play** / **Pause** / **Stop** to control the pipeline, **Gear** for settings, **Pin** for always-on-top. Advanced settings (`use_llm_segmenter`, `temperature`, `extra_body`, VAD) require editing `config.ini`. Saving settings restarts the pipeline.
+Run `python app.py`. Use **Play** / **Pause** / **Stop** to control the pipeline, **Gear** for settings, **Pin** for always-on-top. Most settings can be changed in the settings popover; advanced settings (`extra_body`, VAD parameters) require editing `config.ini`. ASR/translation setting changes take effect after restarting the pipeline; display settings (font size) apply immediately.
 
 ## Configuration
 
@@ -120,7 +122,8 @@ cp config.ini.example config.ini
 | `api_key` | API key value directly (takes precedence over `api_key_env`) | *(empty)* |
 | `model` | Model identifier | `deepseek-chat` |
 | `target_lang` | Target language for translation | `Simplified Chinese` |
-| `use_llm_segmenter` | Use LLM for hybrid segmentation + translation (see below) | `true` |
+| `enabled` | Enable translation (`true`/`false`). When `false`, only segmented source text is shown | `true` |
+| `segmenter` | Segmentation strategy: `heuristic` (rule-based) or `llm` (LLM-assisted) | `llm` |
 | `temperature` | Sampling temperature | `1.0` |
 | `extra_body` | Extra JSON merged into API calls (e.g. `{"thinking": {"type": "disabled"}}`) | *(empty)* |
 
@@ -134,6 +137,8 @@ cp config.ini.example config.ini
 | `sample_rate` | audio | Sample rate in Hz | `16000` |
 | `streaming_step_size` | audio | Audio frame duration in seconds | `0.2` |
 | `always_on_top` | display | Start with window pinned on top | `true` |
+| `original_font_size` | display | Font size (px) for source text | `13` |
+| `translated_font_size` | display | Font size (px) for translated text | `17` |
 
 ## Troubleshooting
 
