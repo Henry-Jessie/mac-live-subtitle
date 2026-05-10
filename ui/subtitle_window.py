@@ -23,6 +23,14 @@ from core.config import Config, config
 try:
     import objc
     from ctypes import c_void_p
+    from AppKit import (
+        NSWindowCollectionBehaviorCanJoinAllSpaces,
+        NSWindowCollectionBehaviorFullScreenAuxiliary,
+        NSWindowCollectionBehaviorStationary,
+        NSWindowStyleMaskNonactivatingPanel,
+        NSMainMenuWindowLevel,
+        NSNormalWindowLevel,
+    )
     HAS_OBJC = True
 except ImportError:
     HAS_OBJC = False
@@ -1559,6 +1567,8 @@ class SubtitleWindow(QMainWindow):
         if self.is_pinned:
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
+        # Use NSPanel
+        self.setWindowFlags(Qt.WindowType.Tool)
         # Light background matching macOS standard window
         self.setStyleSheet("QMainWindow { background-color: #FFFFFF; }")
 
@@ -1630,16 +1640,15 @@ class SubtitleWindow(QMainWindow):
         if not HAS_OBJC:
             return
         try:
-            from AppKit import (
-                NSWindowCollectionBehaviorCanJoinAllSpaces,
-                NSWindowCollectionBehaviorStationary,
-            )
             win_id = int(self.winId())
             ns_view = objc.objc_object(c_void_p=c_void_p(win_id))
             ns_window = ns_view.window()
+            ns_window.setHidesOnDeactivate_(False)
+            ns_window.setCanHide_(False)
             ns_window.setCollectionBehavior_(
-                NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
+                NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary
             )
+            ns_window.setStyleMask_(ns_window.styleMask() | NSWindowStyleMaskNonactivatingPanel)
         except Exception as e:
             print(f"[SubtitleWindow] All-spaces error: {e}")
 
@@ -1810,7 +1819,14 @@ class SubtitleWindow(QMainWindow):
                 win_id = int(self.winId())
                 ns_view = objc.objc_object(c_void_p=c_void_p(win_id))
                 ns_window = ns_view.window()
-                ns_window.setLevel_(3 if self.is_pinned else 0)
+                if self.is_pinned:
+                    ns_window.setLevel_(NSMainMenuWindowLevel)
+                    ns_window.setCollectionBehavior_(
+                        NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary
+                    )
+                else:
+                    ns_window.setLevel_(NSNormalWindowLevel)
+                    ns_window.setCollectionBehavior_(0)
             except Exception:
                 pass
         else:
