@@ -175,6 +175,15 @@ class SubtitleDisplay(QWidget):
         self.transcript_data: dict[int, dict] = {}
         self.translation_enabled = True
 
+        # Follow-tail scrolling: stick to the bottom on ANY content growth —
+        # new items, a live line wrapping taller, translations arriving — as
+        # long as the user hasn't scrolled up. Scrolling back to the bottom
+        # resumes following.
+        self._follow_tail = True
+        vbar = self.scroll_area.verticalScrollBar()
+        vbar.valueChanged.connect(self._on_scroll_value_changed)
+        vbar.rangeChanged.connect(self._on_scroll_range_changed)
+
         # Runtime display state (used by SubtitleItem, updated by preview/config)
         self.original_font_size = config.original_font_size
         self.translated_font_size = config.translated_font_size
@@ -280,7 +289,19 @@ class SubtitleDisplay(QWidget):
             self.container_layout.insertWidget(insert_idx, new_widget)
             QTimer.singleShot(10, self._scroll_to_bottom)
 
+    def _on_scroll_value_changed(self, value: int):
+        vbar = self.scroll_area.verticalScrollBar()
+        self._follow_tail = value >= vbar.maximum() - 30
+
+    def _on_scroll_range_changed(self, _minimum: int, maximum: int):
+        # Content height changed (new item, growing live line, translation
+        # appended). Re-stick only when the user is already at the bottom.
+        if self._follow_tail:
+            self.scroll_area.verticalScrollBar().setValue(maximum)
+
     def _scroll_to_bottom(self):
+        if not self._follow_tail:
+            return
         sb = self.scroll_area.verticalScrollBar()
         sb.setValue(sb.maximum())
 
@@ -310,6 +331,7 @@ class SubtitleDisplay(QWidget):
             widget.deleteLater()
         self.items.clear()
         self.transcript_data.clear()
+        self._follow_tail = True
         self.placeholder.show()
 
 
@@ -497,7 +519,7 @@ class SettingsPopover(QFrame):
         "DeepSeek": (
             "https://api.deepseek.com/v1",
             "DEEPSEEK_API_KEY",
-            "deepseek-chat",
+            "deepseek-v4-flash",
             None,
         ),
         "Google": (
@@ -516,15 +538,9 @@ class SettingsPopover(QFrame):
 
     # ASR provider presets: name -> (api_key_env, model_options, backend)
     _PROVIDERS = {
-        "Deepgram": ("DEEPGRAM_API_KEY", [
-            "nova-3",
-            "nova-3-medical",
-        ], "deepgram_stream"),
-        "Qwen ASR": ("DASHSCOPE_API_KEY", [
-            "qwen3-asr-flash-realtime",
-            "qwen3-asr-flash-realtime-2026-02-10",
-            "qwen3-asr-flash-realtime-2025-10-27",
-        ], "qwen3_asr_realtime"),
+        "FunASR": ("DASHSCOPE_API_KEY", [
+            "fun-asr-realtime",
+        ], "funasr_realtime"),
     }
 
     def __init__(self, parent=None):
@@ -834,13 +850,8 @@ class SettingsPopover(QFrame):
         self._row("Model", self.model_edit, asr_lay)
 
         api_key_wrap, self.api_key_edit = self._password_with_toggle("")
-        self._row("API Key", api_key_wrap, asr_lay, hint="Empty uses env var")
+        self._row("API Key", api_key_wrap, asr_lay, last=True, hint="Empty uses env var")
 
-        # Mode (segmentation strategy)
-        self.segmenter_combo = self._combo()
-        self.segmenter_combo.addItem("Heuristic", "heuristic")
-        self.segmenter_combo.addItem("LLM", "llm")
-        self._row("Segmenter", self.segmenter_combo, asr_lay, last=True, hint="Sentence splitting strategy")
         self._on_provider_changed(self.provider_combo.currentText())
         lay.addWidget(asr_card)
 
@@ -884,8 +895,15 @@ class SettingsPopover(QFrame):
         self.trans_base_url_edit = self._line_edit("https://api.openai.com/v1")
         self._row("Base URL", self.trans_base_url_edit, llm_lay)
 
-        self.trans_model_edit = self._line_edit("e.g. deepseek-chat")
+        self.trans_model_edit = self._line_edit("e.g. deepseek-v4-flash")
         self._row("Model", self.trans_model_edit, llm_lay)
+
+        # DeepSeek V4 thinking mode (ignored by non-DeepSeek providers when Auto)
+        self.thinking_combo = self._combo()
+        self.thinking_combo.addItem("Disabled", False)
+        self.thinking_combo.addItem("Enabled", True)
+        self.thinking_combo.addItem("Auto (omit)", None)
+        self._row("Thinking", self.thinking_combo, llm_lay, hint="DeepSeek V4 thinking mode; Auto omits the parameter")
 
         trans_key_wrap, self.trans_api_key_edit = self._password_with_toggle("")
         self._row("API Key", trans_key_wrap, llm_lay, hint="sk-... or $ENV_NAME")
@@ -991,7 +1009,7 @@ class SettingsPopover(QFrame):
         preset = self._PROVIDERS.get(provider_name)
         if not preset:
             return
-        api_key_env, models, _backend = preset
+        api_key_env, models, backend = preset
 
         # Model: set first preset model as default
         if models:
@@ -1008,7 +1026,7 @@ class SettingsPopover(QFrame):
     def _on_trans_enabled_changed(self, _index: int):
         """Enable/disable translation-specific fields based on enabled state."""
         enabled = self.trans_enabled_combo.currentData()
-        for w in (self.target_lang_combo, self.temperature_spin):
+        for w in (self.target_lang_combo, self.temperature_spin, self.thinking_combo):
             w.setEnabled(bool(enabled))
 
     def _on_trans_provider_changed(self, preset_name: str):
@@ -1098,24 +1116,12 @@ class SettingsPopover(QFrame):
             if idx >= 0:
                 self.device_combo.setCurrentIndex(idx)
 
-        # Detect provider from backend
-        if cfg.asr_backend == "deepgram_stream":
-            self.provider_combo.setCurrentText("Deepgram")
-            self.model_edit.setText(cfg.deepgram_model or "nova-3")
-        elif cfg.asr_backend == "qwen3_asr_realtime":
-            self.provider_combo.setCurrentText("Qwen ASR")
-            self.model_edit.setText(cfg.qwen3_asr_realtime_model or "qwen3-asr-flash-realtime")
-        else:
-            self.provider_combo.setCurrentText("Deepgram")
-            self.model_edit.setText(cfg.deepgram_model or "nova-3")
+        # Detect provider from backend (FunASR is currently the only backend)
+        self.provider_combo.setCurrentText("FunASR")
+        self.model_edit.setText(cfg.funasr_realtime_model or "fun-asr-realtime")
 
         # API key (show actual key if set directly, otherwise empty to use env)
         self.api_key_edit.setText("")
-
-        # Segmenter strategy
-        seg_idx = self.segmenter_combo.findData(cfg.segmenter_strategy)
-        if seg_idx >= 0:
-            self.segmenter_combo.setCurrentIndex(seg_idx)
 
         # Translation enabled
         en_idx = self.trans_enabled_combo.findData(cfg.translation_enabled)
@@ -1173,6 +1179,11 @@ class SettingsPopover(QFrame):
 
         # Temperature
         self.temperature_spin.setValue(cfg.translation_temperature)
+
+        # Thinking mode (DeepSeek V4): True/False/None -> combo index
+        t_idx = self.thinking_combo.findData(cfg.translation_thinking)
+        if t_idx >= 0:
+            self.thinking_combo.setCurrentIndex(t_idx)
 
         # Display settings
         self.original_font_spin.setValue(cfg.original_font_size)
@@ -1261,39 +1272,35 @@ class SettingsPopover(QFrame):
 
         # Provider / model / key
         provider = self.provider_combo.currentText()
-        preset = self._PROVIDERS.get(provider, ("DEEPGRAM_API_KEY", ["nova-3"], "deepgram_stream"))
+        preset = self._PROVIDERS.get(provider, ("DASHSCOPE_API_KEY", ["fun-asr-realtime"], "funasr_realtime"))
         api_key_env = preset[0]
         backend = preset[2]
 
         cp.set("transcription", "backend", backend)
 
-        if backend == "deepgram_stream":
-            cp.set("transcription", "deepgram_model", self.model_edit.text().strip() or "nova-3")
-        elif backend == "qwen3_asr_realtime":
+        if backend == "funasr_realtime":
             cp.set(
                 "transcription",
-                "qwen3_asr_realtime_model",
-                self.model_edit.text().strip() or "qwen3-asr-flash-realtime",
+                "funasr_realtime_model",
+                self.model_edit.text().strip() or "fun-asr-realtime",
             )
 
             # Clean up old key fields before writing new ones
-            for opt in ("qwen3_asr_realtime_api_key", "qwen3_asr_realtime_api_key_env"):
+            for opt in ("funasr_realtime_api_key", "funasr_realtime_api_key_env"):
                 if cp.has_option("transcription", opt):
                     cp.remove_option("transcription", opt)
 
             if api_key_env:
-                cp.set("transcription", "qwen3_asr_realtime_api_key_env", api_key_env)
+                cp.set("transcription", "funasr_realtime_api_key_env", api_key_env)
 
             explicit_key = self.api_key_edit.text().strip()
             if explicit_key:
-                cp.set("transcription", "qwen3_asr_realtime_api_key", explicit_key)
+                cp.set("transcription", "funasr_realtime_api_key", explicit_key)
 
-        # Translation mode
-        # Translation enabled + segmenter strategy
+        # Translation enabled
         cp.set("translation", "enabled", "true" if self.trans_enabled_combo.currentData() else "false")
-        cp.set("translation", "segmenter", self.segmenter_combo.currentData() or "llm")
         # Remove legacy fields
-        for legacy in ("mode", "use_llm_segmenter"):
+        for legacy in ("mode", "use_llm_segmenter", "segmenter"):
             if cp.has_option("translation", legacy):
                 cp.remove_option("translation", legacy)
 
@@ -1342,6 +1349,10 @@ class SettingsPopover(QFrame):
 
         # Temperature
         cp.set("translation", "temperature", str(self.temperature_spin.value()))
+
+        # Thinking mode (DeepSeek V4): True/False/None -> true/false/auto
+        thinking_val = self.thinking_combo.currentData()
+        cp.set("translation", "thinking", {True: "true", False: "false", None: "auto"}[thinking_val])
 
         # Display settings
         if not cp.has_section("display"):
@@ -1715,9 +1726,13 @@ class SubtitleWindow(QMainWindow):
         self._last_pipeline_error = ""
         self.subtitle_display.translation_enabled = getattr(pipeline, "translation_enabled", True)
         self.subtitle_display.show_status("Starting…", timeout_ms=0)
-        self.pipeline.signals.update_text.connect(self.subtitle_display.update_text)
+        self.pipeline.signals.update_text.connect(
+            lambda *args, p=pipeline: self._on_pipeline_update_text(p, *args)
+        )
         try:
-            self.pipeline.signals.update_live_text.connect(self.subtitle_display.update_live_text)
+            self.pipeline.signals.update_live_text.connect(
+                lambda *args, p=pipeline: self._on_pipeline_update_live_text(p, *args)
+            )
         except Exception:
             pass
         try:
@@ -1735,6 +1750,19 @@ class SubtitleWindow(QMainWindow):
         self._style_transport_buttons(state="running")
         if not getattr(self.pipeline, "supports_soft_pause", False):
             self.subtitle_display.show_status("Started", timeout_ms=1200)
+
+    def _on_pipeline_update_text(self, pipeline, *args):
+        # Text signals from a retired pipeline (late translations, queued
+        # executor jobs) must not reach the display — chunk ids restart at 1
+        # each round and would collide with the new round's items.
+        if pipeline is not self.pipeline:
+            return
+        self.subtitle_display.update_text(*args)
+
+    def _on_pipeline_update_live_text(self, pipeline, *args):
+        if pipeline is not self.pipeline:
+            return
+        self.subtitle_display.update_live_text(*args)
 
     def _on_pipeline_status(self, pipeline, message: str, timeout_ms: int):
         if pipeline is not self.pipeline:

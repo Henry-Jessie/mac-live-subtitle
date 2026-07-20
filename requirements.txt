@@ -5,8 +5,6 @@ openai>=1.52.0
 httpx
 tiktoken
 json-repair
-deepgram-sdk
-websockets
 websocket-client
 pyobjc-framework-CoreAudio; sys_platform == 'darwin'
 pyobjc-framework-Cocoa; sys_platform == 'darwin'

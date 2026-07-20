@@ -21,7 +21,7 @@ class Pipeline(QObject):
         self.signals = WorkerSignals()
         self.running = True
         self._pause_evt = threading.Event()
-        self.supports_soft_pause = config.asr_backend in ("deepgram_stream", "qwen3_asr_realtime")
+        self.supports_soft_pause = config.asr_backend == "funasr_realtime"
 
         config.print_config()
 
@@ -32,11 +32,9 @@ class Pipeline(QObject):
         )
 
         self.translation_enabled = config.translation_enabled
-        self.segmenter_strategy = config.segmenter_strategy
 
-        # LLM client needed when translation is on OR segmenter is LLM
-        need_llm = config.translation_enabled or config.segmenter_strategy == "llm"
-        if need_llm:
+        # LLM client needed only when translation is on
+        if config.translation_enabled:
             self.translator = Translator(
                 target_lang=config.target_lang,
                 base_url=config.api_base_url,
@@ -45,6 +43,7 @@ class Pipeline(QObject):
                 extra_body=config.translation_extra_body,
                 temperature=config.translation_temperature,
                 debug=self._translation_debug_enabled(),
+                thinking=config.translation_thinking,
             )
         else:
             self.translator = None
@@ -95,16 +94,21 @@ class Pipeline(QObject):
             pass
         return False
 
-    def _run_translation(self, text: str, chunk_id: int, trailing_context: str | None = None):
+    def _run_translation(self, text: str, chunk_id: int, trailing_context: str | None = None, interim: bool = False):
+        # interim translations only refresh the translation slot of the live
+        # line (empty original keeps the growing source text untouched) and
+        # are fully overwritten by the next interim or the final translation.
+        original = "" if interim else text
         try:
             translated = self.translator.translate(
                 text,
                 debug=self._translation_debug_enabled(),
                 trailing_context=trailing_context,
+                interim=interim,
             )
-            self.signals.update_text.emit(chunk_id, text, translated)
+            self.signals.update_text.emit(chunk_id, original, translated)
         except Exception as e:
-            self.signals.update_text.emit(chunk_id, text, "[Translation Failed]")
+            self.signals.update_text.emit(chunk_id, original, "[Translation Failed]")
             try:
                 self.signals.error.emit(f"Translation failed: {type(e).__name__}: {e}")
             except Exception:
@@ -132,16 +136,10 @@ class Pipeline(QObject):
         try:
             backend = (config.asr_backend or "").strip().lower()
 
-            if backend == "deepgram_stream":
-                from asr.deepgram_stream import run_deepgram_stream
+            if backend == "funasr_realtime":
+                from asr.funasr_realtime import run_funasr_realtime
 
-                run_deepgram_stream(self)
-                return
-
-            if backend == "qwen3_asr_realtime":
-                from asr.qwen3_asr_realtime import run_qwen3_asr_realtime
-
-                run_qwen3_asr_realtime(self)
+                run_funasr_realtime(self)
                 return
 
             self._signal_error(f"Unsupported backend: {backend!r}")

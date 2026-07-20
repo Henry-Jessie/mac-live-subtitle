@@ -34,31 +34,30 @@ Before running, [configure audio routing](#audio-routing-setup) for system audio
 
 | API Key | Get it from | |
 |:---|:---|:---|
-| Qwen3 ASR | [DashScope China](https://bailian.console.aliyun.com/) / [DashScope Intl](https://bailian.console.alibabacloud.com/) | Region-specific endpoints & keys — see [Configuration](#configuration) |
+| FunASR Realtime ASR | [DashScope China](https://bailian.console.aliyun.com/) / [DashScope Intl](https://bailian.console.alibabacloud.com/) | Region-specific endpoints & keys — see [Configuration](#configuration) |
 | Translation LLM | [DeepSeek](https://platform.deepseek.com/) | Default provider |
-| *Alternatives* | [Deepgram](https://console.deepgram.com/) · [Google AI Studio](https://aistudio.google.com/) · [OpenAI](https://platform.openai.com/) | Deepgram offers $200 free credit |
+| *Translation alternatives* | [Google AI Studio](https://aistudio.google.com/) · [OpenAI](https://platform.openai.com/) | Any OpenAI-compatible endpoint |
 
 ## Features
 
-### Cloud-based Streaming ASR
+### Cloud-based Streaming ASR (FunASR Realtime)
 
-No local model, no GPU required. Two backends available:
+No local model, no GPU required. The app streams audio to Alibaba Cloud's FunASR Realtime service over WebSocket:
 
-- **Qwen3 ASR Realtime** (recommended) — 27 languages with excellent CJK performance, 5 Chinese dialect variants, server-side VAD, emotion recognition, and context injection
-- **Deepgram Nova-3** — sub-300 ms latency, 47+ languages, real-time multilingual auto-detection (note: no Chinese support, limited Japanese/Korean accuracy)
+- Server-side semantic sentence segmentation — each final result arrives as a complete, punctuated sentence; no client-side splitting heuristics needed
+- Mandarin + Cantonese/Sichuan dialects, auto language detection, non-speech filtering, emotion recognition
+- Hotword customization and context enhancement, word-level timestamps
+- Optional VAD segmentation mode with tunable silence threshold for lower-latency scenarios
 
-### Hybrid Subtitle Segmentation
+### Interim & Final Translation
 
-Segmentation strategy and translation are independent controls (`segmenter` and `enabled` in config):
+Subtitles and translation are decoupled. While a sentence is still growing, temporary translations fire at configurable length thresholds (`funasr_interim_translate_chars`) — each translates the full current text, overwriting the previous one. A final, context-aware translation runs when the sentence ends. Interim translations never enter the translation context window.
 
-- **LLM segmenter** (default) — a heuristic splitter proposes candidate segments, then an LLM reviews them: merging short fragments, holding incomplete segments when the ASR draft suggests more words are coming. Slightly higher latency, but handles edge cases (mid-sentence decimals, trailing abbreviations, numbering artifacts) that pure heuristics miss.
-- **Heuristic segmenter** — only the rule-based splitter runs. Lowest latency, but occasional awkward breaks.
-
-Translation can be toggled independently — when disabled, segmented source text is displayed without translation (ASR-only mode). Both segmenters work in either mode.
+Translation can be toggled off — then only the segmented source text is displayed (ASR-only mode).
 
 ### Context-aware Translation
 
-A sliding context window (capped by token count) feeds recent source/translation pairs into every request, keeping terminology consistent across sentences. Powered by any OpenAI-compatible Chat Completions API. Supports configurable temperature, extra body parameters, and reasoning-model `<think>` tag stripping.
+A sliding context window (capped by token count) feeds recent source/translation pairs into every request, keeping terminology consistent across sentences. Powered by any OpenAI-compatible Chat Completions API (default: DeepSeek `deepseek-v4-flash`). Supports configurable temperature, a dedicated `thinking` toggle for DeepSeek V4 reasoning, extra body parameters, and reasoning-model `<think>` tag stripping.
 
 ### Single-window macOS-native UI
 
@@ -100,18 +99,17 @@ cp config.ini.example config.ini
 
 | Key | Description | Default |
 |:---|:---|:---|
-| `backend` | `deepgram_stream` or `qwen3_asr_realtime` | `qwen3_asr_realtime` |
-| `source_language` | Language hint (`auto` = auto-detect) | `auto` |
-| `deepgram_model` | Deepgram model name | `nova-3` |
-| `qwen3_asr_realtime_model` | Qwen3 model name | `qwen3-asr-flash-realtime` |
-| `qwen3_asr_realtime_ws_url` | WebSocket endpoint — Beijing: `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`, Singapore: `wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime` (API keys are region-specific and not interchangeable) | Beijing endpoint |
-| `qwen3_asr_realtime_api_key_env` | Env var name holding the API key | `DASHSCOPE_API_KEY` |
-| `qwen3_asr_realtime_api_key` | API key value directly (takes precedence over env var) | *(empty)* |
-| `qwen3_asr_realtime_server_vad` | Enable server-side voice activity detection | `true` |
-| `qwen3_asr_realtime_vad_threshold` | VAD sensitivity (`0.0` = server default, higher = less sensitive) | `0.0` |
-| `qwen3_asr_realtime_silence_duration_ms` | Silence before utterance is considered finished | `400` |
-
-> **Note on Deepgram API keys**: the Deepgram SDK reads `DEEPGRAM_API_KEY` directly from the environment. Unlike Qwen3 and the translation LLM, Deepgram keys cannot be set via `config.ini` or the settings UI — you must `export DEEPGRAM_API_KEY` in your shell.
+| `backend` | `funasr_realtime` (currently the only supported backend) | `funasr_realtime` |
+| `source_language` | Language hint (`auto` = auto-detect; maps to `language_hints`, e.g. `zh`, `en`, `ja`) | `auto` |
+| `funasr_realtime_model` | FunASR model name | `fun-asr-realtime` |
+| `funasr_realtime_ws_url` | WebSocket endpoint — standard: `wss://dashscope.aliyuncs.com/api-ws/v1/inference`, workspace-specific: `wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference` (Beijing and Singapore API keys are region-specific and not interchangeable) | Beijing endpoint |
+| `funasr_realtime_api_key_env` | Env var name holding the API key | `DASHSCOPE_API_KEY` |
+| `funasr_realtime_api_key` | API key value directly (takes precedence over env var) | *(empty)* |
+| `funasr_realtime_semantic_punctuation` | Server-side semantic sentence segmentation (accurate boundaries, longer segments). `false` = VAD segmentation (lower latency) | `true` |
+| `funasr_realtime_max_sentence_silence` | VAD silence threshold in ms (200–6000, server default 1300; `0` = omit). VAD mode only | `0` |
+| `funasr_realtime_multi_threshold` | Prevent VAD from producing over-long sentences. VAD mode only | `false` |
+| `funasr_interim_translate_chars` | Interim translations: fire a temporary translation each time a growing sentence's display length crosses another multiple of this value (CJK chars count 2; `0` = disable) | `40` |
+| `funasr_realtime_event_log` | Optional JSONL file logging raw sentence events (interim/end with timestamps) | *(empty)* |
 
 ### `[translation]` — LLM translation
 
@@ -120,10 +118,10 @@ cp config.ini.example config.ini
 | `base_url` | OpenAI-compatible API endpoint | `https://api.deepseek.com/v1` |
 | `api_key_env` | Env var name holding the API key (see below) | `DEEPSEEK_API_KEY` |
 | `api_key` | API key value directly (takes precedence over `api_key_env`) | *(empty)* |
-| `model` | Model identifier | `deepseek-chat` |
+| `model` | Model identifier | `deepseek-v4-flash` |
 | `target_lang` | Target language for translation | `Simplified Chinese` |
 | `enabled` | Enable translation (`true`/`false`). When `false`, only segmented source text is shown | `true` |
-| `segmenter` | Segmentation strategy: `heuristic` (rule-based) or `llm` (LLM-assisted) | `llm` |
+| `thinking` | DeepSeek V4 thinking mode: `false` = disabled, `true` = enabled, `auto` = omit the parameter (use for non-DeepSeek providers) | `false` |
 | `temperature` | Sampling temperature | `1.0` |
 | `extra_body` | Extra JSON merged into API calls (e.g. `{"thinking": {"type": "disabled"}}`) | *(empty)* |
 
@@ -154,7 +152,7 @@ cp config.ini.example config.ini
 <summary><b>ASR not connecting</b></summary>
 
 - Verify your API key environment variable is exported
-- Deepgram returns 401/403 for invalid keys; Qwen3 returns an error event
+- FunASR returns a `task-failed` event with `error_code`/`error_message` for auth or parameter problems; check the console for `[FunASR]` logs
 - The app retries up to 6 times with exponential backoff
 </details>
 
@@ -169,20 +167,20 @@ cp config.ini.example config.ini
 <details>
 <summary><b>High latency</b></summary>
 
-- Try a faster translation model (e.g. DeepSeek Chat or Gemini Flash)
+- Try a faster translation model (e.g. DeepSeek V4 Flash non-thinking or Gemini Flash)
 - Reduce `streaming_step_size` for more frequent audio frames
-- For Qwen3, lower `qwen3_asr_realtime_silence_duration_ms` for faster utterance finalization
+- For lower-latency sentence boundaries, switch to VAD mode (`funasr_realtime_semantic_punctuation = false`) and lower `funasr_realtime_max_sentence_silence`
 </details>
 
 ## How It Works
 
 The pipeline has three concurrent stages:
 
-1. **Audio capture** — opens the configured input device via `sounddevice` (16 kHz mono, configurable step size). Auto-detects BlackHole by default; any input device can be selected via `device_index`.
+1. **Audio capture** — opens the configured input device via `sounddevice` (16 kHz mono, configurable step size; falls back to stereo + downmix on devices that reject mono). Auto-detects a usable BlackHole device by default; any input device can be selected via `device_index`.
 
-2. **Streaming ASR** — the chosen backend establishes a WebSocket to the cloud, converts frames to PCM16, and streams continuously. Interim and final results feed into a `StreamingSegmenter` that accumulates text, tracks drafts, and dispatches translation at segment boundaries.
+2. **Streaming ASR** — the FunASR backend opens a duplex WebSocket to DashScope (`run-task` → binary PCM16 frames → `result-generated` events). Each event carries the full text of the current sentence: interim results replace the live subtitle line, and `sentence_end` commits the sentence verbatim. No client-side segmentation.
 
-3. **Translation & display** — confirmed segments (with sliding context and optional trailing draft) are sent to the LLM endpoint. Translations arrive via Qt signals and appear as timestamped original/translation pairs with auto-scroll.
+3. **Translation & display** — committed sentences are translated by the LLM endpoint (sliding context window) on a single serial executor, so interim and final translations can never arrive out of order. Growing sentences fire temporary translations at length thresholds; the final translation overwrites them. Results reach the UI via pipeline-identity-guarded Qt signals and appear as timestamped original/translation pairs with follow-tail auto-scroll.
 
 ---
 
@@ -192,11 +190,11 @@ The pipeline has three concurrent stages:
 
 ## Roadmap
 
-- **Local Qwen3 ASR** — run [Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) on-device to eliminate cloud dependency and improve privacy
+- **Native macOS rewrite** — ScreenCaptureKit system-audio capture (no BlackHole), AppKit floating subtitle panel, Keychain-stored keys, signed & notarized `.app`
 
 ## Acknowledgments
 
-Inspired by and forked from [Real-Time Translator](https://github.com/Vanyoo/realtime-subtitle) by Van (local ASR + dashboard/overlay architecture). This project replaces local ASR with cloud streaming, adds hybrid LLM segmentation, and consolidates the UI into a single macOS-native window.
+Inspired by and forked from [Real-Time Translator](https://github.com/Vanyoo/realtime-subtitle) by Van (local ASR + dashboard/overlay architecture). This project replaces local ASR with cloud streaming, and consolidates the UI into a single macOS-native window.
 
 ## License
 

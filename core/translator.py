@@ -10,7 +10,7 @@ import json_repair
 from core.config import is_local_url
 
 class Translator:
-    def __init__(self, api_key=None, base_url=None, model="MBZUAI-IFM/K2-Think-nothink", target_lang="Chinese", extra_body=None, temperature=1.0, debug=False):
+    def __init__(self, api_key=None, base_url=None, model="MBZUAI-IFM/K2-Think-nothink", target_lang="Chinese", extra_body=None, temperature=1.0, debug=False, thinking=None):
         """
         Translates text using an LLM.
         
@@ -19,11 +19,14 @@ class Translator:
             base_url: Optional base URL (e.g. for local generic server like Ollama/LMStudio).
             model: Model name to use.
             target_lang: The target language for translation.
+            thinking: DeepSeek V4 thinking mode — True/False to send
+                {"thinking": {"type": "enabled"/"disabled"}}, None to omit the field.
         """
         self.target_lang = target_lang
         self.model = model
         self.extra_body = extra_body if isinstance(extra_body, dict) else None
         self.temperature = float(temperature) if temperature is not None else 1.0
+        self.thinking = thinking if thinking in (True, False) else None
         
         # If no key provided, check env. If still none, we might be in local mode (no auth) or fail.
         # Some local servers don't need a valid key, but the client requires a string.
@@ -70,105 +73,17 @@ class Translator:
             "5. Output ONLY the translation, nothing else."
         )
 
-        self._segment_system_prompt = (
-            "You are a real-time subtitle segmenter and translator.\n\n"
-            "You will receive:\n"
-            "- TARGET_LANG: the language to translate into\n"
-            "- TOKEN_COUNT: approximate token length of TEXT\n"
-            "- TEXT: a growing transcript buffer from live speech recognition\n"
-            "- CANDIDATES: ordered list of segments pre-split from TEXT by a heuristic algorithm\n"
-            "- DRAFT: unconfirmed ASR draft that may follow TEXT (use ONLY for disambiguation)\n"
-            "- CONTEXT: previous translation pairs for terminology consistency\n\n"
-            "IMPORTANT: TEXT is a snapshot of an ongoing speech buffer. "
-            "It may end mid-sentence. Any text you do NOT consume stays in the buffer "
-            "and will be included in the next call with more words appended.\n\n"
-            "Return ONLY valid JSON (no markdown fences, no explanation).\n\n"
-            "Schema:\n"
-            "{\n"
-            "  \"completed\": [\n"
-            "    { \"source\": \"...\", \"anchor\": \"...\", \"translation\": \"...\" }\n"
-            "  ]\n"
-            "}\n\n"
-            "Rules:\n\n"
-            "REVIEW — decide which candidates to emit:\n"
-            "  CANDIDATES are proposed split points. Your job is to decide how many "
-            "to emit from the front of the list (0, some, or all).\n"
-            "  • Emit a candidate if it is a complete, self-contained unit.\n"
-            "  • HOLD a candidate (do NOT emit) if DRAFT shows the candidate is "
-            "incomplete. Example: candidate ends with \"2.\" and DRAFT starts with "
-            "\"5 describes\" → \"2.\" is part of \"2.5\", hold it.\n"
-            "  • You may MERGE adjacent candidates into one `completed` item if they "
-            "form a single short sentence (keep subtitle readability).\n"
-            "  • If CANDIDATES is empty, fall back to scanning TEXT directly "
-            "(still use DRAFT for disambiguation):\n"
-            "    - Emit up to the last sentence-ending punctuation (.!?。！？).\n"
-            "    - If none and TOKEN_COUNT > 18, emit up to the last clause punctuation.\n"
-            "    - Otherwise return {\"completed\": []}.\n\n"
-            "HARD CONSTRAINTS:\n"
-            "  • NEVER translate, consume, or include any part of DRAFT in source or translation.\n"
-            "  • NEVER rewrite, rephrase, or insert/remove characters in source — copy verbatim from TEXT.\n"
-            "  • completed items must consume TEXT from the beginning in order, with no gaps.\n\n"
-            "COPYING — how to fill each item:\n"
-            "  1. `source`: copied character-for-character from TEXT.\n"
-            "  2. `anchor`: the last 5-8 words of `source`, copied verbatim.\n"
-            "  3. `translation`: natural TARGET_LANG subtitle for that `source` segment. "
-            "If source language == TARGET_LANG, copy `source` verbatim.\n\n"
-            "EXAMPLES:\n\n"
-            "CANDIDATES: [\"The company was founded in 2005.\", \"It later acquired\"]\n"
-            "DRAFT: \"several startups in\"\n"
-            "→ emit candidate 1 only. Candidate 2 is incomplete (DRAFT continues it).\n\n"
-            "CANDIDATES: [\"Section 2.\"]\n"
-            "DRAFT: \"5 describes the memory\"\n"
-            "→ {\"completed\": []}  // \"2.\" + DRAFT \"5...\" = \"2.5\", hold.\n\n"
-            "CANDIDATES: [\"Yes.\", \"I agree.\"]\n"
-            "DRAFT: \"\"\n"
-            "→ merge into one item: source=\"Yes. I agree.\"\n"
-        )
-
-        self._segment_only_system_prompt = (
-            "You are a real-time subtitle segmenter.\n\n"
-            "You will receive:\n"
-            "- TOKEN_COUNT: approximate token length of TEXT\n"
-            "- TEXT: a growing transcript buffer from live speech recognition\n"
-            "- CANDIDATES: ordered list of segments pre-split from TEXT by a heuristic algorithm\n"
-            "- DRAFT: unconfirmed ASR draft that may follow TEXT (use ONLY for disambiguation)\n\n"
-            "IMPORTANT: TEXT is a snapshot of an ongoing speech buffer. "
-            "It may end mid-sentence. Any text you do NOT consume stays in the buffer "
-            "and will be included in the next call with more words appended.\n\n"
-            "Return ONLY valid JSON (no markdown fences, no explanation).\n\n"
-            "Schema:\n"
-            "{\n"
-            "  \"completed\": [\n"
-            "    { \"source\": \"...\", \"anchor\": \"...\" }\n"
-            "  ]\n"
-            "}\n\n"
-            "Rules:\n\n"
-            "REVIEW — decide which candidates to emit:\n"
-            "  CANDIDATES are proposed split points. Your job is to decide how many "
-            "to emit from the front of the list (0, some, or all).\n"
-            "  • Emit a candidate if it is a complete, self-contained unit.\n"
-            "  • HOLD a candidate (do NOT emit) if DRAFT shows the candidate is "
-            "incomplete.\n"
-            "  • You may MERGE adjacent candidates into one `completed` item if they "
-            "form a single short sentence (keep subtitle readability).\n"
-            "  • If CANDIDATES is empty, fall back to scanning TEXT directly "
-            "(still use DRAFT for disambiguation):\n"
-            "    - Emit up to the last sentence-ending punctuation (.!?。！？).\n"
-            "    - If none and TOKEN_COUNT > 18, emit up to the last clause punctuation.\n"
-            "    - Otherwise return {\"completed\": []}.\n\n"
-            "HARD CONSTRAINTS:\n"
-            "  • NEVER consume or include any part of DRAFT in source.\n"
-            "  • NEVER rewrite, rephrase, or insert/remove characters in source — copy verbatim from TEXT.\n"
-            "  • completed items must consume TEXT from the beginning in order, with no gaps.\n\n"
-            "COPYING — how to fill each item:\n"
-            "  1. `source`: copied character-for-character from TEXT.\n"
-            "  2. `anchor`: the last 5-8 words of `source`, copied verbatim.\n"
+        # Variant for interim translations of still-growing sentences:
+        # same rules, plus an explicit incomplete-fragment note. Interim
+        # translations are never written into the context window.
+        self._translate_interim_system_prompt = (
+            self._translate_system_prompt + "\n"
+            "6. TEXT is an interim fragment of a still-growing live sentence and may be "
+            "incomplete. Translate only what is present; do not guess or complete missing parts."
         )
 
         if debug:
             print(f"[Translator] translate system_prompt:\n{self._translate_system_prompt}")
-            print(f"[Translator] segment_and_translate system_prompt:\n{self._segment_system_prompt}")
-            print(f"[Translator] segment_only system_prompt:\n{self._segment_only_system_prompt}")
 
     def _count_tokens(self, text):
         return len(self._encoding.encode(text))
@@ -193,6 +108,14 @@ class Translator:
         cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         return cleaned.strip()
 
+    def _merged_extra_body(self):
+        """extra_body for requests: user JSON merged with the thinking toggle
+        (the dedicated `thinking` setting wins over a thinking key in extra_body)."""
+        merged = dict(self.extra_body) if self.extra_body else {}
+        if self.thinking is not None:
+            merged["thinking"] = {"type": "enabled" if self.thinking else "disabled"}
+        return merged or None
+
     def _trim_for_log(self, text: str, max_len: int = 900) -> str:
         s = (text or "").replace("\n", "\\n")
         if len(s) <= max_len:
@@ -205,136 +128,12 @@ class Translator:
         except Exception:
             return self._trim_for_log(str(data), max_len=max_len)
 
-    def segment_and_translate(self, text, *, token_count, candidates=None, draft_continuation=None,
-                              use_context=True, timeout_s=10.0, debug=False) -> dict:
-        """Segment + translate. Returns {"completed":[{"source","anchor","translation"}]}."""
-        return self._segment_request(text, token_count=token_count, candidates=candidates,
-                                     draft_continuation=draft_continuation, translate=True,
-                                     use_context=use_context, timeout_s=timeout_s, debug=debug)
-
-    def segment_only(self, text, *, token_count, candidates=None, draft_continuation=None,
-                     timeout_s=10.0, debug=False) -> dict:
-        """Segment without translation. Returns {"completed":[{"source","anchor","translation":""}]}."""
-        return self._segment_request(text, token_count=token_count, candidates=candidates,
-                                     draft_continuation=draft_continuation, translate=False,
-                                     timeout_s=timeout_s, debug=debug)
-
-    def _segment_request(self, text, *, token_count, candidates=None, draft_continuation=None,
-                         translate=True, use_context=True, timeout_s=10.0, debug=False) -> dict:
-        label = "segment+translate" if translate else "segment_only"
-        if not text or not str(text).strip():
-            return {"completed": []}
-
-        try:
-            token_count = int(token_count)
-        except Exception:
-            token_count = 0
-        text_norm = " ".join(str(text).strip().split())
-
-        candidates_block = ""
-        if candidates:
-            numbered = "\n".join(f"  {i+1}. \"{c}\"" for i, c in enumerate(candidates))
-            candidates_block = f"CANDIDATES (heuristic pre-split):\n{numbered}\n\n"
-
-        draft_norm = ""
-        if draft_continuation and str(draft_continuation).strip():
-            draft_norm = " ".join(str(draft_continuation).strip().split())
-            if len(draft_norm) > 900:
-                draft_norm = draft_norm[:900] + "\u2026"
-
-        # Build user prompt — include context/target only when translating
-        parts = [f"TOKEN_COUNT: {token_count}\n"]
-        if translate:
-            parts.append(f"TARGET_LANG: {self.target_lang}\n")
-        parts.append(f"TEXT:\n{text_norm}\n\n")
-        parts.append(candidates_block)
-        parts.append(f"DRAFT:\n{draft_norm or '(empty)'}\n\n")
-        if translate:
-            context_lines = ""
-            if use_context and self._context_window:
-                context_lines = "".join(
-                    self._format_context_pair(s, t) for s, t, _ in self._context_window
-                ).strip()
-            parts.append(f"CONTEXT:\n{context_lines or '(empty)'}\n\n")
-        parts.append("Return JSON only.")
-        user_prompt = "".join(parts)
-
-        system_prompt = self._segment_system_prompt if translate else self._segment_only_system_prompt
-
-        try:
-            if debug:
-                print(f"[Translator] {label} token_count={token_count} model={self.model}")
-                print(f"[Translator] {label} user_prompt={self._trim_for_log(user_prompt)}")
-
-            create_kwargs = dict(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=800 if translate else 600,
-                timeout=timeout_s,
-                response_format={"type": "json_object"},
-            )
-            if self.extra_body:
-                create_kwargs["extra_body"] = self.extra_body
-            response = self.client.chat.completions.create(**create_kwargs)
-            raw_result = (response.choices[0].message.content or "").strip()
-            if debug:
-                print(f"[Translator] {label} raw_result={self._trim_for_log(raw_result)}")
-            cleaned = self._strip_thinking(raw_result)
-
-            try:
-                data = json_repair.loads(cleaned)
-            except Exception:
-                return {"completed": []}
-            if not isinstance(data, dict):
-                return {"completed": []}
-
-            completed = data.get("completed")
-            if not isinstance(completed, list):
-                return {"completed": []}
-
-            normalized: list[dict] = []
-            for item in completed:
-                if not isinstance(item, dict):
-                    continue
-                source = item.get("source")
-                anchor = item.get("anchor")
-                if not isinstance(source, str) or not isinstance(anchor, str):
-                    continue
-                if not source.strip() or not anchor.strip():
-                    continue
-                tr = ""
-                if translate:
-                    tr = item.get("translation", "")
-                    if not isinstance(tr, str):
-                        continue
-                normalized.append({"source": source, "anchor": anchor, "translation": tr})
-
-            if translate:
-                for item in normalized:
-                    src = (item.get("source") or "").strip()
-                    tr = (item.get("translation") or "").strip()
-                    if src and tr:
-                        self._append_context_pair(src, tr)
-
-            if debug:
-                print(f"[Translator] {label} normalized={self._dump_for_log({'completed': normalized})}")
-            return {"completed": normalized}
-
-        except OpenAIError as e:
-            print(f"[Translator] {label} error: {e}")
-            return {"completed": []}
-        except Exception as e:
-            print(f"[Translator] {label} unexpected error: {e}")
-            return {"completed": []}
-
-    def translate(self, text, use_context=True, *, trailing_context: str | None = None, debug: bool = False):
+    def translate(self, text, use_context=True, *, trailing_context: str | None = None, debug: bool = False, interim: bool = False):
         """
         Translates the given text. Returns the translated string.
         Uses previous transcription as context for better continuity.
+        When interim=True, TEXT is a still-growing fragment: a special system
+        prompt is used and the result is NOT written into the context window.
         """
         if not text or not text.strip():
             return ""
@@ -368,15 +167,16 @@ class Translator:
             create_kwargs = dict(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": self._translate_system_prompt},
+                    {"role": "system", "content": self._translate_interim_system_prompt if interim else self._translate_system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=self.temperature,
                 max_tokens=500,
                 timeout=10.0,
             )
-            if self.extra_body:
-                create_kwargs["extra_body"] = self.extra_body
+            extra_body = self._merged_extra_body()
+            if extra_body:
+                create_kwargs["extra_body"] = extra_body
             response = self.client.chat.completions.create(**create_kwargs)
             raw_result = response.choices[0].message.content.strip()
             if debug:
@@ -392,9 +192,10 @@ class Translator:
             if debug:
                 print(f"[Translator] translate parsed_data={self._dump_for_log(data)}")
                 print(f"[Translator] translate normalized={self._trim_for_log(result)}")
-            
-            self._append_context_pair(text, result)
-            
+
+            if not interim:
+                self._append_context_pair(text, result)
+
             return result
         except OpenAIError as e:
             print(f"Translation Error: {e}")
