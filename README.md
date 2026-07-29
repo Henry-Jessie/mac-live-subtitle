@@ -4,7 +4,7 @@
   <img src="assets/icon.png" width="128" height="128" alt="Mac Live Subtitle icon">
 </p>
 
-Real-time speech-to-text and translation with a floating subtitle window for macOS. Captures audio (system output via BlackHole, or any microphone) and streams it to a cloud ASR service, then displays translated subtitles on screen — perfect for meetings, lectures, videos, and gaming.
+Real-time speech-to-text and translation with a floating subtitle window for macOS. Captures system audio directly through ScreenCaptureKit and streams it to a cloud ASR service, then displays translated subtitles on screen — useful for meetings, lectures, videos, and gaming.
 
 <video src="demo/demo.mp4" width="100%" autoplay muted loop></video>
 
@@ -15,22 +15,19 @@ https://github.com/user-attachments/assets/2faca983-a76b-4591-95a8-5a11c1233a83
 
 ```bash
 # Install
-brew install blackhole-2ch
 git clone https://github.com/Henry-Jessie/mac-live-subtitle.git
 cd mac-live-subtitle
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp config.ini.example config.ini
 
-# Set API keys (get from links below)
-export DASHSCOPE_API_KEY="your-key"    # Qwen3 ASR
-export DEEPSEEK_API_KEY="your-key"     # translation LLM
-
 # Run
 python app.py
 ```
 
-Before running, [configure audio routing](#audio-routing-setup) for system audio capture.
+Open Settings and enter the ASR and translation API keys. They are stored in macOS Keychain.
+
+On first use, allow Screen Recording (shown as Screen & System Audio Recording on newer macOS versions), then restart the app. BlackHole and a Multi-Output Device are no longer required.
 
 | API Key | Get it from | |
 |:---|:---|:---|
@@ -67,25 +64,20 @@ A sliding context window (capped by token count) feeds recent source/translation
 - Soft pause/resume (keeps WebSocket alive) and automatic reconnection with exponential backoff
 
 <details>
-<summary><h2>Audio Routing Setup</h2></summary>
+<summary><h2>System Audio Permission</h2></summary>
 
-To capture system audio you need [BlackHole](https://existential.audio/blackhole/) (`brew install blackhole-2ch`) and a Multi-Output Device that mirrors sound to both your speakers and BlackHole.
+System audio capture uses ScreenCaptureKit and requires macOS 13 or later.
 
-1. Open **Audio MIDI Setup** (in /Applications/Utilities/)
-2. Click **+** → **Create Multi-Output Device**
-3. Check both **BlackHole 2ch** and your output device (e.g. MacBook Pro Speakers)
-4. Set **Primary Device** to **BlackHole 2ch**, sample rate **48.0 kHz**
-5. Right-click the Multi-Output Device → **Use This Device For Sound Output**
-
-![Multi-Output Device setup](demo/how_to_set_blackhole.png)
-
-> You can also skip BlackHole and point `device_index` at a physical microphone to transcribe live speech instead.
+1. Start the app and press **Play**.
+2. Approve the macOS system-audio capture prompt.
+3. If the prompt was previously dismissed, open **System Settings → Privacy & Security → Screen & System Audio Recording** and enable the terminal or packaged application used to launch Mac Live Subtitle.
+4. Quit and restart the application after changing the permission.
 
 </details>
 
 ## Usage
 
-Run `python app.py`. Use **Play** / **Pause** / **Stop** to control the pipeline, **Gear** for settings, **Pin** for always-on-top. Most settings can be changed in the settings popover; advanced settings (`extra_body`, VAD parameters) require editing `config.ini`. ASR/translation setting changes take effect after restarting the pipeline; display settings (font size) apply immediately.
+Run `python app.py`. Use **Play** / **Pause** / **Stop** to control the pipeline, **Gear** for settings, **Pin** for always-on-top. API keys entered in Settings are stored in macOS Keychain; clear a key field and save to remove it. Each API key has a **Test** button that checks the current field without saving it; the FunASR test performs only an authenticated WebSocket handshake and sends no audio. Most settings can be changed in the settings popover; advanced settings (`extra_body`, VAD parameters) require editing `config.ini`. ASR/translation setting changes take effect after restarting the pipeline; display settings (font size) apply immediately.
 
 ## Configuration
 
@@ -103,8 +95,6 @@ cp config.ini.example config.ini
 | `source_language` | Language hint (`auto` = auto-detect; maps to `language_hints`, e.g. `zh`, `en`, `ja`) | `auto` |
 | `funasr_realtime_model` | FunASR model name | `fun-asr-realtime` |
 | `funasr_realtime_ws_url` | WebSocket endpoint — standard: `wss://dashscope.aliyuncs.com/api-ws/v1/inference`, workspace-specific: `wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference` (Beijing and Singapore API keys are region-specific and not interchangeable) | Beijing endpoint |
-| `funasr_realtime_api_key_env` | Env var name holding the API key | `DASHSCOPE_API_KEY` |
-| `funasr_realtime_api_key` | API key value directly (takes precedence over env var) | *(empty)* |
 | `funasr_realtime_semantic_punctuation` | Server-side semantic sentence segmentation (accurate boundaries, longer segments). `false` = VAD segmentation (lower latency) | `true` |
 | `funasr_realtime_max_sentence_silence` | VAD silence threshold in ms (200–6000, server default 1300; `0` = omit). VAD mode only | `0` |
 | `funasr_realtime_multi_threshold` | Prevent VAD from producing over-long sentences. VAD mode only | `false` |
@@ -115,9 +105,8 @@ cp config.ini.example config.ini
 
 | Key | Description | Default |
 |:---|:---|:---|
+| `provider` | Stable provider ID for provider-specific Keychain entries (`deepseek`, `google`, or `custom`) | `deepseek` |
 | `base_url` | OpenAI-compatible API endpoint | `https://api.deepseek.com/v1` |
-| `api_key_env` | Env var name holding the API key (see below) | `DEEPSEEK_API_KEY` |
-| `api_key` | API key value directly (takes precedence over `api_key_env`) | *(empty)* |
 | `model` | Model identifier | `deepseek-v4-flash` |
 | `target_lang` | Target language for translation | `Simplified Chinese` |
 | `enabled` | Enable translation (`true`/`false`). When `false`, only segmented source text is shown | `true` |
@@ -125,43 +114,60 @@ cp config.ini.example config.ini
 | `temperature` | Sampling temperature | `1.0` |
 | `extra_body` | Extra JSON merged into API calls (e.g. `{"thinking": {"type": "disabled"}}`) | *(empty)* |
 
-> **API key resolution**: the app looks up the key in this order: `api_key` in config (literal value) → environment variable named by `api_key_env`. In the settings UI, you can type either a raw key (`sk-...`) or an env var reference prefixed with `$` (e.g. `$DEEPSEEK_API_KEY`), and the app will store it accordingly.
+> **API key storage**: provider-specific credentials are read only from macOS Keychain. A legacy literal key in `config.ini` remains readable for migration and is removed after the next successful Settings save.
 
 ### `[audio]` / `[display]`
 
 | Key | Section | Description | Default |
 |:---|:---|:---|:---|
-| `device_index` | audio | `auto` (detect BlackHole) or a specific device index | `auto` |
-| `sample_rate` | audio | Sample rate in Hz | `16000` |
+| `sample_rate` | audio | ScreenCaptureKit output sample rate in Hz | `16000` |
 | `streaming_step_size` | audio | Audio frame duration in seconds | `0.2` |
 | `always_on_top` | display | Start with window pinned on top | `true` |
 | `original_font_size` | display | Font size (px) for source text | `13` |
 | `translated_font_size` | display | Font size (px) for translated text | `17` |
+
+## Build the macOS application
+
+The current PyQt transition build uses `py2app`. Releases are distributed only as a standalone `.app`; `uv` remains a development and build tool. The transition build remains a regular Dock application, while the later AppKit menu-bar build will set `LSUIElement`.
+
+```bash
+uv sync --group build
+
+# Development bundle that references the source tree
+uv run python setup.py py2app --alias
+
+# Standalone arm64 bundle
+uv run python setup.py py2app
+```
+
+Delete the generated `build/` and `dist/` directories before switching between alias and standalone modes. The result is `dist/Mac Live Subtitle.app`. Packaged settings are written to `~/Library/Application Support/Mac Live Subtitle/config.ini`; API keys remain in Keychain. The build does not include the ignored development `config.ini`.
+
+py2app applies an ad-hoc signature, which is suitable for running this local transition build. Public distribution still requires a Developer ID Application signature and Apple notarization.
 
 ## Troubleshooting
 
 <details>
 <summary><b>No audio captured</b></summary>
 
-- Run `python core/audio_capture.py` to list devices and test capture
-- Ensure BlackHole is installed and Multi-Output Device is set as system output
-- Check `device_index = auto` in `config.ini` (or set the correct index manually)
+- Confirm Mac Live Subtitle is enabled under **System Settings → Privacy & Security → Screen & System Audio Recording**
+- Quit and restart the application after granting permission
+- Play audible media from another application; audio produced by Mac Live Subtitle itself is excluded from capture
 </details>
 
 <details>
 <summary><b>ASR not connecting</b></summary>
 
-- Verify your API key environment variable is exported
-- FunASR returns a `task-failed` event with `error_code`/`error_message` for auth or parameter problems; check the console for `[FunASR]` logs
+- Confirm the DashScope API key is present under **Settings → Transcription**
+- FunASR authentication and server errors appear in the application error banner
 - The app retries up to 6 times with exponential backoff
 </details>
 
 <details>
 <summary><b>Translation not appearing</b></summary>
 
-- Confirm `[translation] base_url`, `api_key_env`, and `model` are set correctly
-- The env var named in `api_key_env` must be exported (e.g. `export DEEPSEEK_API_KEY=...`)
-- Check the console for `[Translator]` error logs
+- Confirm the provider API key is present under **Settings → Translation**
+- Confirm `[translation] base_url` and `model` are set correctly
+- Translation request errors appear in the application error banner
 </details>
 
 <details>
@@ -176,7 +182,7 @@ cp config.ini.example config.ini
 
 The pipeline has three concurrent stages:
 
-1. **Audio capture** — opens the configured input device via `sounddevice` (16 kHz mono, configurable step size; falls back to stereo + downmix on devices that reject mono). Auto-detects a usable BlackHole device by default; any input device can be selected via `device_index`.
+1. **Audio capture** — ScreenCaptureKit captures macOS system audio directly as 16 kHz mono float32 samples. The capture layer groups variable callback sizes into fixed frames controlled by `streaming_step_size`, then the existing pipeline converts them to PCM16 for ASR.
 
 2. **Streaming ASR** — the FunASR backend opens a duplex WebSocket to DashScope (`run-task` → binary PCM16 frames → `result-generated` events). Each event carries the full text of the current sentence: interim results replace the live subtitle line, and `sentence_end` commits the sentence verbatim. No client-side segmentation.
 
@@ -190,7 +196,7 @@ The pipeline has three concurrent stages:
 
 ## Roadmap
 
-- **Native macOS rewrite** — ScreenCaptureKit system-audio capture (no BlackHole), AppKit floating subtitle panel, Keychain-stored keys, signed & notarized `.app`
+- **Native macOS rewrite** — AppKit menu-bar controls and floating subtitle panel, followed by Developer ID signing and notarization
 
 ## Acknowledgments
 

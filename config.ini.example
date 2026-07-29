@@ -1,8 +1,8 @@
 [translation]
+provider = deepseek
 ; Translation LLM API endpoint (OpenAI-compatible)
 base_url = https://api.deepseek.com/v1
-; Environment variable name that holds the API key (default: OPENAI_API_KEY)
-api_key_env = DEEPSEEK_API_KEY
+; Enter the provider API key in Settings; it is stored in macOS Keychain.
 model = deepseek-v4-flash
 ; DeepSeek V4 thinking mode: false = disabled (default, lower latency & cost),
 ; true = enabled (reasoning), auto = omit the parameter (server decides).
@@ -31,10 +31,7 @@ funasr_realtime_model = fun-asr-realtime
 ; Workspace-specific: wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
 ; Beijing and Singapore API keys are region-specific and not interchangeable
 funasr_realtime_ws_url = wss://dashscope.aliyuncs.com/api-ws/v1/inference
-; Environment variable name for the DashScope API key
-funasr_realtime_api_key_env = DASHSCOPE_API_KEY
-; Or set the key directly (takes precedence over env var)
-; funasr_realtime_api_key =
+; Enter the DashScope API key in Settings; it is stored in macOS Keychain.
 ; Semantic punctuation prediction (server-side semantic segmentation:
 ; more accurate sentence boundaries, longer segments, higher latency).
 ; When false, VAD segmentation is used (shorter segments, lower latency,
@@ -56,8 +53,7 @@ funasr_interim_translate_chars = 40
 ; funasr_realtime_event_log = funasr_events.jsonl
 
 [audio]
-; Audio input device index (auto = auto-detect BlackHole on macOS)
-device_index = auto
+; System audio is captured directly through ScreenCaptureKit (macOS 13+).
 sample_rate = 16000
 ; Audio frame step size in seconds for the streaming generator
 streaming_step_size = 0.2

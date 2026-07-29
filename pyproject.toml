@@ -1,7 +1,25 @@
 [project]
 name = "mac-live-subtitle"
 version = "0.1.0"
-description = "Add your description here"
+description = "Real-time system-audio transcription and translation for macOS"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "PyQt6",
+    "httpx",
+    "json-repair",
+    "keyring>=25.7,<26",
+    "numpy",
+    "openai>=1.52.0",
+    "pyobjc-framework-Cocoa>=12.2.1; sys_platform == 'darwin'",
+    "pyobjc-framework-CoreAudio>=12.2.1; sys_platform == 'darwin'",
+    "pyobjc-framework-CoreMedia>=12.2.1; sys_platform == 'darwin'",
+    "pyobjc-framework-ScreenCaptureKit>=12.2.1; sys_platform == 'darwin'",
+    "tiktoken",
+    "websocket-client",
+]
+
+[dependency-groups]
+build = [
+    "py2app>=0.28.10,<0.29",
+]

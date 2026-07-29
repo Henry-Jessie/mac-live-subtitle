@@ -5,3 +5,6 @@ config.ini
 .venv
 demo/audio/
 *.log
+build/
+dist/
+*.egg-info/

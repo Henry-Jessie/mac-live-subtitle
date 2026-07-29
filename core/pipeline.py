@@ -26,7 +26,6 @@ class Pipeline(QObject):
         config.print_config()
 
         self.audio = AudioCapture(
-            device_index=config.device_index,
             sample_rate=config.sample_rate,
             step_size=config.streaming_step_size,
         )

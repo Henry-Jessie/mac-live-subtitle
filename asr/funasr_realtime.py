@@ -32,8 +32,6 @@ def run_funasr_realtime(pipeline) -> None:
     commits the sentence verbatim. No client-side delta computation or
     segmentation anywhere.
     """
-    import os
-
     import numpy as np
     import websocket
 
@@ -48,13 +46,9 @@ def run_funasr_realtime(pipeline) -> None:
 
     api_key = (config.funasr_realtime_api_key or "").strip()
     if not api_key:
-        env_name = (config.funasr_realtime_api_key_env or "DASHSCOPE_API_KEY").strip()
-        api_key = (os.getenv(env_name) or "").strip()
-    if not api_key:
         raise RuntimeError(
-            "FunASR API key not found. Set env var "
-            f"${config.funasr_realtime_api_key_env or 'DASHSCOPE_API_KEY'} "
-            "or configure [transcription] funasr_realtime_api_key."
+            "FunASR API key is not configured. "
+            "Open Settings → Transcription and enter an API key."
         )
 
     headers = [f"Authorization: Bearer {api_key}"]
@@ -388,11 +382,11 @@ def run_funasr_realtime(pipeline) -> None:
                         except Exception:
                             pass
 
-                    # Surface audio device failures as pipeline errors
-                    # (otherwise a dead device looks like a clean stop).
+                    # Surface capture failures as pipeline errors
+                    # (otherwise a stopped ScreenCaptureKit stream looks clean).
                     audio_err = getattr(pipeline.audio, "last_error", None)
                     if audio_err:
-                        err["msg"] = f"Audio device failed: {audio_err}"
+                        err["msg"] = f"Audio capture failed: {audio_err}"
                         _error_emit(err["msg"])
                         pipeline.running = False
                         stop_evt.set()

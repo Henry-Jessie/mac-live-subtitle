@@ -7,6 +7,7 @@ import time
 import signal
 import configparser
 
+from keyring.errors import KeyringError
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QFrame, QScrollArea, QToolButton, QSizePolicy,
@@ -17,7 +18,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPoint, QPointF, QRectF
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen
 
-from core.config import Config, config
+from core.config import Config, config, is_local_url
+from core.credentials import (
+    ASR_DASHSCOPE_ACCOUNT,
+    credential_store,
+    translation_account,
+)
+from core.paths import resource_path
 
 # macOS native integration
 try:
@@ -526,37 +533,47 @@ class SettingsPopover(QFrame):
     settings_saved = pyqtSignal()
     display_changed = pyqtSignal(int, int)  # (orig_font, trans_font)
 
-    # Translation LLM presets: name -> (base_url, api_key_env, model, extra_body_json_or_None)
+    # Translation LLM presets: name -> (base_url, model, extra_body_json_or_None)
     _TRANSLATION_PROVIDERS = {
         "DeepSeek": (
             "https://api.deepseek.com/v1",
-            "DEEPSEEK_API_KEY",
             "deepseek-v4-flash",
             None,
         ),
         "Google": (
             "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "GEMINI_API_KEY",
             "gemini-3-flash-preview",
             '{"reasoning_effort": "minimal"}',
         ),
         "Custom": (
             "",
-            "OPENAI_API_KEY",
             "",
             None,
         ),
     }
+    _TRANSLATION_PROVIDER_IDS = {
+        "DeepSeek": "deepseek",
+        "Google": "google",
+        "Custom": "custom",
+    }
 
-    # ASR provider presets: name -> (api_key_env, model_options, backend)
+    # ASR provider presets: name -> (model_options, backend)
     _PROVIDERS = {
-        "FunASR": ("DASHSCOPE_API_KEY", [
+        "FunASR": ([
             "fun-asr-realtime",
         ], "funasr_realtime"),
     }
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._settings_loaded = False
+        self._loading_settings = False
+        self._asr_key_dirty = False
+        self._migrate_legacy_asr_key = False
+        self._active_translation_provider = "deepseek"
+        self._translation_key_drafts: dict[str, str] = {}
+        self._translation_key_dirty_accounts: set[str] = set()
+        self._legacy_translation_accounts: set[str] = set()
         self.setWindowFlags(Qt.WindowType.Popup)
         self.setFixedWidth(340)
         self.setStyleSheet("SettingsPopover { background: #F2F2F7; border: none; }")
@@ -721,6 +738,7 @@ class SettingsPopover(QFrame):
 
         lay.addWidget(le, 1)
         lay.addWidget(btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        le._eye_toggle = btn
         return wrap, le
 
     def _spin(self, lo: float, hi: float, step: float, suffix: str):
@@ -825,7 +843,7 @@ class SettingsPopover(QFrame):
         lay.setSpacing(6)
         page.setLayout(lay)
 
-        # Audio device
+        # Audio source
         lay.addWidget(self._section_title("Audio"))
         audio_card = self._card()
         audio_lay = QVBoxLayout()
@@ -833,16 +851,17 @@ class SettingsPopover(QFrame):
         audio_lay.setSpacing(0)
         audio_card.setLayout(audio_lay)
 
-        import sounddevice as sd
-        self.device_combo = self._combo()
-        self.device_combo.addItem("Auto (Default)", "auto")
-        try:
-            for i, d in enumerate(sd.query_devices()):
-                if d["max_input_channels"] > 0:
-                    self.device_combo.addItem(f"[{i}] {d['name']}", i)
-        except Exception:
-            pass
-        self._row("Device", self.device_combo, audio_lay, last=True, hint="Audio input device for capture")
+        audio_source = QLabel("System Audio")
+        audio_source.setStyleSheet(
+            "color: #1D1D1F; font-size: 13px; background: transparent;"
+        )
+        self._row(
+            "Source",
+            audio_source,
+            audio_lay,
+            last=True,
+            hint="Audio played by this Mac",
+        )
         lay.addWidget(audio_card)
 
         # ASR provider
@@ -862,7 +881,40 @@ class SettingsPopover(QFrame):
         self._row("Model", self.model_edit, asr_lay)
 
         api_key_wrap, self.api_key_edit = self._password_with_toggle("")
-        self._row("API Key", api_key_wrap, asr_lay, last=True, hint="Empty uses env var")
+        self.api_key_edit.textEdited.connect(self._on_asr_key_edited)
+        self._row(
+            "API Key",
+            api_key_wrap,
+            asr_lay,
+            hint="Stored in macOS Keychain; clear and Save to remove",
+        )
+
+        asr_test_wrap = QWidget()
+        asr_test_wrap.setStyleSheet("background: transparent;")
+        asr_test_lay = QHBoxLayout()
+        asr_test_lay.setContentsMargins(0, 0, 0, 0)
+        asr_test_lay.setSpacing(8)
+        asr_test_wrap.setLayout(asr_test_lay)
+
+        self.asr_test_btn = QPushButton("Test")
+        self.asr_test_btn.setFixedWidth(50)
+        self.asr_test_btn.setStyleSheet(
+            "QPushButton { background: #007AFF; color: white; border: none;"
+            "  border-radius: 6px; font-size: 12px; padding: 4px 0; }"
+            "QPushButton:hover { background: #0066D6; }"
+            "QPushButton:disabled { background: #B0B0B0; }"
+        )
+        self.asr_test_btn.clicked.connect(self._on_asr_test_clicked)
+
+        self.asr_test_result = QLabel("")
+        self.asr_test_result.setWordWrap(True)
+        self.asr_test_result.setStyleSheet(
+            "color: #8E8E93; font-size: 11px; background: transparent;"
+        )
+
+        asr_test_lay.addWidget(self.asr_test_btn, 0)
+        asr_test_lay.addWidget(self.asr_test_result, 1)
+        self._row("", asr_test_wrap, asr_lay, last=True)
 
         self._on_provider_changed(self.provider_combo.currentText())
         lay.addWidget(asr_card)
@@ -918,7 +970,13 @@ class SettingsPopover(QFrame):
         self._row("Thinking", self.thinking_combo, llm_lay, hint="DeepSeek V4 thinking mode; Auto omits the parameter")
 
         trans_key_wrap, self.trans_api_key_edit = self._password_with_toggle("")
-        self._row("API Key", trans_key_wrap, llm_lay, hint="sk-... or $ENV_NAME")
+        self.trans_api_key_edit.textEdited.connect(self._on_translation_key_edited)
+        self._row(
+            "API Key",
+            trans_key_wrap,
+            llm_lay,
+            hint="Stored per provider in macOS Keychain; clear and Save to remove",
+        )
 
         # Test row
         test_wrap = QWidget()
@@ -1015,25 +1073,52 @@ class SettingsPopover(QFrame):
             int(self.translated_font_spin.value()),
         )
 
+    @staticmethod
+    def _reset_secret_visibility(field: QLineEdit) -> None:
+        field.setEchoMode(QLineEdit.EchoMode.Password)
+        field._eye_toggle.setChecked(False)
+
+    def _set_secret_text(self, field: QLineEdit, value: str) -> None:
+        field.setText(value)
+        self._reset_secret_visibility(field)
+
+    def _set_status_error(self, message: str) -> None:
+        self.status_label.setStyleSheet(
+            "color: #FF3B30; font-size: 11px; background: transparent;"
+        )
+        self.status_label.setText(message)
+
+    def _read_credential(self, account: str) -> str | None:
+        try:
+            return credential_store.get(account)
+        except KeyringError as exc:
+            self._set_status_error(f"Keychain: {exc}")
+            return None
+
+    def _translation_provider_id(self, provider_name: str | None = None) -> str:
+        name = provider_name or self.trans_provider_combo.currentText()
+        return self._TRANSLATION_PROVIDER_IDS[name]
+
+    def _on_asr_key_edited(self, _text: str) -> None:
+        self._asr_key_dirty = True
+
+    def _on_translation_key_edited(self, text: str) -> None:
+        provider_id = self._translation_provider_id()
+        self._translation_key_drafts[provider_id] = text
+        self._translation_key_dirty_accounts.add(provider_id)
 
     def _on_provider_changed(self, provider_name: str):
-        """Auto-fill model and API key hint when provider changes."""
+        """Auto-fill the model when the provider changes."""
         preset = self._PROVIDERS.get(provider_name)
         if not preset:
             return
-        api_key_env, models, backend = preset
+        models, _backend = preset
 
-        # Model: set first preset model as default
         if models:
             self.model_edit.setText(models[0])
         else:
             self.model_edit.setText("")
-
-        # API key hint
-        if api_key_env:
-            self.api_key_edit.setPlaceholderText(f"Auto from ${api_key_env} (or type manually)")
-        else:
-            self.api_key_edit.setPlaceholderText("Type API key (optional)")
+        self.api_key_edit.setPlaceholderText("Enter API key")
 
     def _on_trans_enabled_changed(self, _index: int):
         """Enable/disable translation-specific fields based on enabled state."""
@@ -1046,17 +1131,25 @@ class SettingsPopover(QFrame):
         preset = self._TRANSLATION_PROVIDERS.get(preset_name)
         if not preset:
             return
-        base_url, api_key_env, model, _extra_body = preset
+        base_url, model, _extra_body = preset
 
-        # Custom: keep current field values, only update placeholder
+        # Custom: keep current field values.
         if preset_name != "Custom":
             self.trans_base_url_edit.setText(base_url)
             self.trans_model_edit.setText(model)
 
-        if api_key_env:
-            self.trans_api_key_edit.setPlaceholderText(f"Default: ${api_key_env}")
-        else:
-            self.trans_api_key_edit.setPlaceholderText("sk-... or $ENV_NAME")
+        self.trans_api_key_edit.setPlaceholderText("Enter API key")
+
+        if self._settings_loaded and not self._loading_settings:
+            provider_id = self._translation_provider_id(preset_name)
+            self._active_translation_provider = provider_id
+            if provider_id not in self._translation_key_drafts:
+                stored = self._read_credential(translation_account(provider_id))
+                self._translation_key_drafts[provider_id] = stored or ""
+            self._set_secret_text(
+                self.trans_api_key_edit,
+                self._translation_key_drafts[provider_id],
+            )
 
     def _set_target_lang_custom_mode(self, enabled: bool, prefill: str | None = None, focus: bool = True):
         if enabled:
@@ -1122,18 +1215,24 @@ class SettingsPopover(QFrame):
 
     def load_from_config(self, cfg: Config):
         """Populate fields from current config."""
-        # Audio device
-        if cfg.device_index is not None:
-            idx = self.device_combo.findData(cfg.device_index)
-            if idx >= 0:
-                self.device_combo.setCurrentIndex(idx)
+        self._settings_loaded = False
+        self._loading_settings = True
+        self.status_label.setStyleSheet(
+            "color: #34C759; font-size: 11px; background: transparent;"
+        )
+        self.status_label.setText("")
 
         # Detect provider from backend (FunASR is currently the only backend)
         self.provider_combo.setCurrentText("FunASR")
         self.model_edit.setText(cfg.funasr_realtime_model or "fun-asr-realtime")
 
-        # API key (show actual key if set directly, otherwise empty to use env)
-        self.api_key_edit.setText("")
+        # API key: show the Keychain value as bullets. A legacy config.ini
+        # value is shown once and moves to Keychain on Save.
+        stored_asr_key = self._read_credential(ASR_DASHSCOPE_ACCOUNT)
+        asr_key = stored_asr_key or cfg.legacy_funasr_realtime_api_key
+        self._set_secret_text(self.api_key_edit, asr_key)
+        self._asr_key_dirty = False
+        self._migrate_legacy_asr_key = bool(cfg.legacy_funasr_realtime_api_key)
 
         # Translation enabled
         en_idx = self.trans_enabled_combo.findData(cfg.translation_enabled)
@@ -1141,30 +1240,34 @@ class SettingsPopover(QFrame):
             self.trans_enabled_combo.setCurrentIndex(en_idx)
         self._on_trans_enabled_changed(0)
 
-        # Translation LLM — match preset by base_url, fallback to Custom
-        matched_preset = "Custom"
-        for name, (url, _env, _model, _eb) in self._TRANSLATION_PROVIDERS.items():
-            if name == "Custom":
-                continue
-            if url and cfg.api_base_url and url.rstrip("/") == cfg.api_base_url.rstrip("/"):
-                matched_preset = name
-                break
+        # Translation LLM
+        matched_preset = next(
+            (
+                name
+                for name, provider_id in self._TRANSLATION_PROVIDER_IDS.items()
+                if provider_id == cfg.translation_provider
+            ),
+            "Custom",
+        )
         self.trans_provider_combo.setCurrentText(matched_preset)
         if matched_preset == "Custom":
             self.trans_base_url_edit.setText(cfg.api_base_url or "")
         self.trans_model_edit.setText(cfg.model or "")
-        # Show explicit key or $ENV_NAME; empty = use provider default env
-        explicit_key = (cfg._get("translation", "api_key") or "").strip()
-        if explicit_key:
-            self.trans_api_key_edit.setText(explicit_key)
-        else:
-            custom_env = (cfg._get("translation", "api_key_env") or "").strip()
-            matched = self._TRANSLATION_PROVIDERS.get(matched_preset)
-            preset_env = matched[1] if matched else ""
-            if custom_env and custom_env != preset_env:
-                self.trans_api_key_edit.setText(f"${custom_env}")
-            else:
-                self.trans_api_key_edit.setText("")
+
+        provider_id = self._translation_provider_id(matched_preset)
+        stored_translation_key = self._read_credential(
+            translation_account(provider_id)
+        )
+        translation_key = (
+            stored_translation_key or cfg.legacy_translation_api_key
+        )
+        self._translation_key_drafts = {provider_id: translation_key}
+        self._translation_key_dirty_accounts.clear()
+        self._legacy_translation_accounts = (
+            {provider_id} if cfg.legacy_translation_api_key else set()
+        )
+        self._active_translation_provider = provider_id
+        self._set_secret_text(self.trans_api_key_edit, translation_key)
 
         # Subtitle settings
         target = (cfg.target_lang or "").strip()
@@ -1200,24 +1303,59 @@ class SettingsPopover(QFrame):
         # Display settings
         self.original_font_spin.setValue(cfg.original_font_size)
         self.translated_font_spin.setValue(cfg.translated_font_size)
+        self._loading_settings = False
+        self._settings_loaded = True
 
-    # ---- Translation test ----
+    # ---- API tests ----
+
+    def _on_asr_test_clicked(self):
+        api_key = (self.api_key_edit.text() or "").strip()
+        if not api_key:
+            self.asr_test_result.setStyleSheet(
+                "color: #FF3B30; font-size: 11px; background: transparent;"
+            )
+            self.asr_test_result.setText("API key is not configured. Enter it above.")
+            return
+
+        self.asr_test_btn.setEnabled(False)
+        self.asr_test_result.setStyleSheet(
+            "color: #8E8E93; font-size: 11px; background: transparent;"
+        )
+        self.asr_test_result.setText("Testing…")
+
+        self._asr_test_worker = FunASRKeyTestWorker(
+            url=config.funasr_realtime_ws_url,
+            api_key=api_key,
+            parent=self,
+        )
+        self._asr_test_worker.ok.connect(self._on_asr_test_ok)
+        self._asr_test_worker.err.connect(self._on_asr_test_err)
+        self._asr_test_worker.finished.connect(
+            lambda: self.asr_test_btn.setEnabled(True)
+        )
+        self._asr_test_worker.finished.connect(self._asr_test_worker.deleteLater)
+        self._asr_test_worker.start()
+
+    def _on_asr_test_ok(self, message: str):
+        self.asr_test_result.setStyleSheet(
+            "color: #34C759; font-size: 11px; background: transparent;"
+        )
+        self.asr_test_result.setText(message)
+
+    def _on_asr_test_err(self, message: str):
+        self.asr_test_result.setStyleSheet(
+            "color: #FF3B30; font-size: 11px; background: transparent;"
+        )
+        self.asr_test_result.setText(message)
 
     def _resolve_translation_api_key_from_ui(self) -> str:
         key_input = (self.trans_api_key_edit.text() or "").strip()
-        if key_input.startswith("$") and len(key_input) > 1:
-            env_name = key_input[1:].strip()
-            val = (os.getenv(env_name) or "").strip()
-            if not val:
-                raise ValueError(f"Env var ${env_name} is not set")
-            return val
         if key_input:
             return key_input
-        preset = self._TRANSLATION_PROVIDERS.get(self.trans_provider_combo.currentText())
-        env_name = (preset[1] if preset else "OPENAI_API_KEY") or "OPENAI_API_KEY"
-        val = (os.getenv(env_name) or "").strip()
-        # Fall back to dummy key for local servers (Ollama, LM Studio) that don't require auth
-        return val or "dummy-key-for-local"
+        base_url = (self.trans_base_url_edit.text() or "").strip()
+        if is_local_url(base_url):
+            return "dummy-key-for-local"
+        raise ValueError("API key is not configured. Enter it above.")
 
     def _on_trans_test_clicked(self):
         try:
@@ -1241,10 +1379,10 @@ class SettingsPopover(QFrame):
         # Resolve extra_body from current provider preset
         extra_body = None
         preset = self._TRANSLATION_PROVIDERS.get(self.trans_provider_combo.currentText())
-        if preset and preset[3]:
+        if preset and preset[2]:
             try:
                 import json
-                extra_body = json.loads(preset[3])
+                extra_body = json.loads(preset[2])
             except Exception:
                 pass
 
@@ -1269,24 +1407,54 @@ class SettingsPopover(QFrame):
         self.trans_test_result.setText(message)
 
     def _save_config(self):
-        """Write settings to config.ini."""
+        """Write ordinary settings to config.ini and secrets to Keychain."""
         cp = configparser.ConfigParser()
-        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.ini")
+        config_path = config.config_path
         cp.read(config_path)
 
         for section in ("translation", "transcription", "audio"):
             if not cp.has_section(section):
                 cp.add_section(section)
 
-        # Audio
-        idx = self.device_combo.currentData()
-        cp.set("audio", "device_index", str(idx) if idx is not None else "auto")
+        # Remove the legacy BlackHole/sounddevice selector.
+        if cp.has_option("audio", "device_index"):
+            cp.remove_option("audio", "device_index")
 
         # Provider / model / key
         provider = self.provider_combo.currentText()
-        preset = self._PROVIDERS.get(provider, ("DASHSCOPE_API_KEY", ["fun-asr-realtime"], "funasr_realtime"))
-        api_key_env = preset[0]
-        backend = preset[2]
+        preset = self._PROVIDERS.get(
+            provider,
+            (["fun-asr-realtime"], "funasr_realtime"),
+        )
+        backend = preset[1]
+
+        active_translation_provider = self._translation_provider_id()
+        self._translation_key_drafts[active_translation_provider] = (
+            self.trans_api_key_edit.text()
+        )
+
+        try:
+            if self._asr_key_dirty or self._migrate_legacy_asr_key:
+                asr_key = self.api_key_edit.text().strip()
+                if asr_key:
+                    credential_store.save(ASR_DASHSCOPE_ACCOUNT, asr_key)
+                else:
+                    credential_store.delete(ASR_DASHSCOPE_ACCOUNT)
+
+            accounts_to_save = (
+                self._translation_key_dirty_accounts
+                | self._legacy_translation_accounts
+            )
+            for provider_id in accounts_to_save:
+                account = translation_account(provider_id)
+                key_value = self._translation_key_drafts[provider_id].strip()
+                if key_value:
+                    credential_store.save(account, key_value)
+                else:
+                    credential_store.delete(account)
+        except KeyringError as exc:
+            self._set_status_error(f"Keychain: {exc}")
+            return
 
         cp.set("transcription", "backend", backend)
 
@@ -1297,17 +1465,10 @@ class SettingsPopover(QFrame):
                 self.model_edit.text().strip() or "fun-asr-realtime",
             )
 
-            # Clean up old key fields before writing new ones
+            # Secrets live in Keychain.
             for opt in ("funasr_realtime_api_key", "funasr_realtime_api_key_env"):
                 if cp.has_option("transcription", opt):
                     cp.remove_option("transcription", opt)
-
-            if api_key_env:
-                cp.set("transcription", "funasr_realtime_api_key_env", api_key_env)
-
-            explicit_key = self.api_key_edit.text().strip()
-            if explicit_key:
-                cp.set("transcription", "funasr_realtime_api_key", explicit_key)
 
         # Translation enabled
         cp.set("translation", "enabled", "true" if self.trans_enabled_combo.currentData() else "false")
@@ -1319,6 +1480,7 @@ class SettingsPopover(QFrame):
         # Translation LLM
         trans_provider_name = self.trans_provider_combo.currentText()
         trans_provider = self._TRANSLATION_PROVIDERS.get(trans_provider_name)
+        cp.set("translation", "provider", active_translation_provider)
 
         base_url = self.trans_base_url_edit.text().strip()
         trans_model = self.trans_model_edit.text().strip()
@@ -1329,12 +1491,10 @@ class SettingsPopover(QFrame):
         if trans_model:
             cp.set("translation", "model", trans_model)
 
-        # Only write api_key_env / extra_body when a non-Custom provider is selected
+        # Write provider-specific request options.
         if trans_provider:
-            _, api_key_env_trans, _, extra_body_json = trans_provider
+            _, _, extra_body_json = trans_provider
             if trans_provider_name != "Custom":
-                if api_key_env_trans:
-                    cp.set("translation", "api_key_env", api_key_env_trans)
                 if extra_body_json:
                     cp.set("translation", "extra_body", extra_body_json)
                 else:
@@ -1342,16 +1502,10 @@ class SettingsPopover(QFrame):
                     if cp.has_option("translation", "extra_body"):
                         cp.remove_option("translation", "extra_body")
 
-        # API Key: $ENV_NAME → write api_key_env; otherwise → write api_key
-        key_input = self.trans_api_key_edit.text().strip()
-        if key_input.startswith("$") and len(key_input) > 1:
-            cp.set("translation", "api_key_env", key_input[1:])
-            if cp.has_option("translation", "api_key"):
-                cp.remove_option("translation", "api_key")
-        elif key_input:
-            cp.set("translation", "api_key", key_input)
-        elif cp.has_option("translation", "api_key"):
+        if cp.has_option("translation", "api_key"):
             cp.remove_option("translation", "api_key")
+        if cp.has_option("translation", "api_key_env"):
+            cp.remove_option("translation", "api_key_env")
 
         # Target language
         target_lang = (self.target_lang_combo.currentText() or "").strip()
@@ -1372,9 +1526,22 @@ class SettingsPopover(QFrame):
         cp.set("display", "original_font_size", str(int(self.original_font_spin.value())))
         cp.set("display", "translated_font_size", str(int(self.translated_font_spin.value())))
 
-        with open(config_path, "w") as f:
-            cp.write(f)
+        try:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with config_path.open("w", encoding="utf-8") as f:
+                cp.write(f)
+            config_path.chmod(0o600)
+        except OSError as exc:
+            self._set_status_error(f"Cannot save settings: {exc}")
+            return
 
+        self._asr_key_dirty = False
+        self._migrate_legacy_asr_key = False
+        self._translation_key_dirty_accounts.clear()
+        self._legacy_translation_accounts.clear()
+        self.status_label.setStyleSheet(
+            "color: #34C759; font-size: 11px; background: transparent;"
+        )
         self.status_label.setText("Saved! Restart to apply ASR/translation changes.")
         QTimer.singleShot(3000, lambda: self.status_label.setText(""))
         self.settings_saved.emit()
@@ -1387,6 +1554,17 @@ class SettingsPopover(QFrame):
         self.move(x, y)
         self.show()
         self._apply_rounded_corners()
+
+    def hideEvent(self, event):
+        self._settings_loaded = False
+        self._set_secret_text(self.api_key_edit, "")
+        self._set_secret_text(self.trans_api_key_edit, "")
+        self._asr_key_dirty = False
+        self._migrate_legacy_asr_key = False
+        self._translation_key_drafts.clear()
+        self._translation_key_dirty_accounts.clear()
+        self._legacy_translation_accounts.clear()
+        super().hideEvent(event)
 
     def _apply_rounded_corners(self):
         """Use PyObjC to round the native popup window corners."""
@@ -1410,18 +1588,59 @@ class SettingsPopover(QFrame):
 class StartupWorker(QThread):
     """Initialize Pipeline on a background thread (model loading can be slow)."""
 
-    finished = pyqtSignal(object)  # Pipeline or None
+    succeeded = pyqtSignal(object)
+    failed = pyqtSignal(str)
 
     def run(self):
         try:
             from core.pipeline import Pipeline
             pipeline = Pipeline()
-            self.finished.emit(pipeline)
-        except Exception as e:
-            print(f"[StartupWorker] Error: {e}")
+            self.succeeded.emit(pipeline)
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            print(f"[StartupWorker] Error: {message}")
             import traceback
             traceback.print_exc()
-            self.finished.emit(None)
+            self.failed.emit(message)
+
+
+# ---------------------------------------------------------------------------
+# FunASRKeyTestWorker — one-shot authenticated WebSocket handshake
+# ---------------------------------------------------------------------------
+class FunASRKeyTestWorker(QThread):
+    """Check a FunASR API key without starting capture or sending audio."""
+
+    ok = pyqtSignal(str)
+    err = pyqtSignal(str)
+
+    def __init__(self, *, url, api_key, parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.api_key = api_key
+
+    def run(self):
+        import websocket
+
+        connection = None
+        try:
+            connection = websocket.create_connection(
+                self.url,
+                header=[f"Authorization: Bearer {self.api_key}"],
+                timeout=10,
+            )
+            self.ok.emit("API key accepted")
+        except websocket.WebSocketBadStatusException as exc:
+            if exc.status_code == 401:
+                self.err.emit(
+                    "Invalid API key (401). Check the key and endpoint region."
+                )
+            else:
+                self.err.emit(f"WebSocket handshake failed ({exc.status_code}).")
+        except Exception as exc:
+            self.err.emit(f"{type(exc).__name__}: {exc}"[:300])
+        finally:
+            if connection is not None:
+                connection.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1719,21 +1938,11 @@ class SubtitleWindow(QMainWindow):
         self._paused = False
 
         self.startup_worker = StartupWorker()
-        self.startup_worker.finished.connect(self._on_pipeline_ready)
+        self.startup_worker.succeeded.connect(self._on_pipeline_ready)
+        self.startup_worker.failed.connect(self._on_pipeline_init_failed)
         self.startup_worker.start()
 
     def _on_pipeline_ready(self, pipeline):
-        if pipeline is None:
-            self.play_btn.setEnabled(True)
-            self._style_transport_buttons(state="idle")
-            self.subtitle_display.show_status("")
-            self.subtitle_display.placeholder.setText("Init failed — check console")
-            self.subtitle_display.placeholder.setStyleSheet(
-                "color: #FF3B30; font-size: 14px; background: transparent;"
-            )
-            self.subtitle_display.placeholder.show()
-            return
-
         self.pipeline = pipeline
         self._last_pipeline_error = ""
         self.subtitle_display.translation_enabled = getattr(pipeline, "translation_enabled", True)
@@ -1762,6 +1971,14 @@ class SubtitleWindow(QMainWindow):
         self._style_transport_buttons(state="running")
         if not getattr(self.pipeline, "supports_soft_pause", False):
             self.subtitle_display.show_status("Started", timeout_ms=1200)
+
+    def _on_pipeline_init_failed(self, message: str):
+        self.play_btn.setEnabled(True)
+        self._style_transport_buttons(state="idle")
+        self.subtitle_display.show_error(
+            f"Initialization failed: {message}",
+            timeout_ms=0,
+        )
 
     def _on_pipeline_update_text(self, pipeline, *args):
         # Text signals from a retired pipeline (late translations, queued
@@ -1927,10 +2144,13 @@ def main():
     app = QApplication.instance()
     if not app:
         app = QApplication(sys.argv)
+    app.setApplicationName("Mac Live Subtitle")
+    app.setOrganizationName("Henry Jessie")
+    app.setOrganizationDomain("henryjessie.com")
 
-    icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.png")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+    icon_path = resource_path("assets", "icon.png")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     window = SubtitleWindow()
     window.show()

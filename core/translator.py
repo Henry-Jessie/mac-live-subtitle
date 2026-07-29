@@ -1,7 +1,6 @@
 from openai import OpenAI, OpenAIError
 from collections import deque
 import httpx
-import os
 import re
 import tiktoken
 import json
@@ -15,7 +14,7 @@ class Translator:
         Translates text using an LLM.
         
         Args:
-            api_key: OpenAI API Key (or set OPENAI_API_KEY env var).
+            api_key: API key loaded from macOS Keychain.
             base_url: Optional base URL (e.g. for local generic server like Ollama/LMStudio).
             model: Model name to use.
             target_lang: The target language for translation.
@@ -28,13 +27,14 @@ class Translator:
         self.temperature = float(temperature) if temperature is not None else 1.0
         self.thinking = thinking if thinking in (True, False) else None
         
-        # If no key provided, check env. If still none, we might be in local mode (no auth) or fail.
-        # Some local servers don't need a valid key, but the client requires a string.
         if not api_key:
-            api_key = os.getenv("OPENAI_API_KEY", "dummy-key-for-local")
-            
-        if not base_url:
-            base_url = os.getenv("OPENAI_BASE_URL")
+            if is_local_url(base_url):
+                api_key = "dummy-key-for-local"
+            else:
+                raise RuntimeError(
+                    "Translation API key is not configured. "
+                    "Open Settings → Translation and enter an API key."
+                )
 
         self.base_url = base_url
 
@@ -48,7 +48,7 @@ class Translator:
         print(f"  - Base URL: {base_url or 'https://api.openai.com/v1 (default)'}")
         print(f"  - Model: {model}")
         print(f"  - Target Language: {target_lang}")
-        print(f"  - API Key: {api_key[:8]}...{api_key[-4:] if len(api_key) > 12 else '***'}")
+        print(f"  - API Key Configured: {'yes' if api_key else 'no'}")
         
         # Sliding context window for sentence continuity (source, translation) capped by tokens
         self._encoding = tiktoken.get_encoding("o200k_base")
