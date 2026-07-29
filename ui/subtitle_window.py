@@ -249,6 +249,12 @@ class SubtitleDisplay(QWidget):
                     break
             self.items.insert(insert_idx, (chunk_id, new_widget))
             self.container_layout.insertWidget(insert_idx, new_widget)
+            if len(self.items) > 200:
+                old_chunk_id, old_widget = self.items.pop(0)
+                self.container_layout.removeWidget(old_widget)
+                old_widget.setParent(None)
+                old_widget.deleteLater()
+                self.transcript_data.pop(old_chunk_id, None)
             QTimer.singleShot(10, self._scroll_to_bottom)
 
     def update_live_text(self, chunk_id: int, confirmed_text: str, interim_text: str):
@@ -287,6 +293,12 @@ class SubtitleDisplay(QWidget):
                     break
             self.items.insert(insert_idx, (chunk_id, new_widget))
             self.container_layout.insertWidget(insert_idx, new_widget)
+            if len(self.items) > 200:
+                old_chunk_id, old_widget = self.items.pop(0)
+                self.container_layout.removeWidget(old_widget)
+                old_widget.setParent(None)
+                old_widget.deleteLater()
+                self.transcript_data.pop(old_chunk_id, None)
             QTimer.singleShot(10, self._scroll_to_bottom)
 
     def _on_scroll_value_changed(self, value: int):
