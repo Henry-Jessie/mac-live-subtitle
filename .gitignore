@@ -7,4 +7,5 @@ demo/audio/
 *.log
 build/
 dist/
+release/
 *.egg-info/
