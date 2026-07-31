@@ -6,7 +6,7 @@ import tiktoken
 import json
 import json_repair
 
-from core.config import is_local_url
+from core.urls import is_local_url
 
 class Translator:
     def __init__(self, api_key=None, base_url=None, model="MBZUAI-IFM/K2-Think-nothink", target_lang="Chinese", extra_body=None, temperature=1.0, debug=False, thinking=None):
@@ -14,7 +14,7 @@ class Translator:
         Translates text using an LLM.
         
         Args:
-            api_key: API key loaded from macOS Keychain.
+            api_key: API key loaded from the app's local credential store.
             base_url: Optional base URL (e.g. for local generic server like Ollama/LMStudio).
             model: Model name to use.
             target_lang: The target language for translation.

@@ -14,5 +14,9 @@ def default_config_path() -> Path:
     return PROJECT_ROOT / "config.ini"
 
 
+def default_credentials_path() -> Path:
+    return APP_SUPPORT_DIR / "credentials.json"
+
+
 def resource_path(*parts: str) -> Path:
     return RESOURCE_DIR.joinpath(*parts)

@@ -5,8 +5,6 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from core.config import config
-
 
 def _display_len(s: str) -> int:
     """Display length for interim-translation thresholds: CJK/fullwidth chars
@@ -35,16 +33,20 @@ def run_funasr_realtime(pipeline) -> None:
     import numpy as np
     import websocket
 
-    sr = int(config.sample_rate)
+    settings = pipeline.settings
+    sr = int(settings.sample_rate)
     if sr <= 0:
         raise ValueError(f"Invalid sample_rate={sr}")
     if sr not in (8000, 16000):
         print(f"[FunASR] Warning: fun-asr-realtime expects 8/16kHz PCM16. Current sample_rate={sr}.")
 
-    model = (config.funasr_realtime_model or "fun-asr-realtime").strip()
-    url = (config.funasr_realtime_ws_url or "").strip() or "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+    model = (settings.funasr_realtime_model or "fun-asr-realtime").strip()
+    url = (
+        (settings.funasr_realtime_ws_url or "").strip()
+        or "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+    )
 
-    api_key = (config.funasr_realtime_api_key or "").strip()
+    api_key = (settings.funasr_realtime_api_key or "").strip()
     if not api_key:
         raise RuntimeError(
             "FunASR API key is not configured. "
@@ -60,10 +62,12 @@ def run_funasr_realtime(pipeline) -> None:
     interim_fired = 0  # how many interim translations fired for current sentence
     # Fire interim translations when a growing sentence crosses 1x/2x/3x of
     # this display-length threshold (0 = disabled).
-    interim_translate_units = int(getattr(config, "funasr_interim_translate_chars", 40) or 0)
+    interim_translate_units = int(
+        settings.funasr_interim_translate_chars or 0
+    )
 
     event_log = None
-    event_log_path = (config.funasr_realtime_event_log or "").strip()
+    event_log_path = (settings.funasr_realtime_event_log or "").strip()
     if event_log_path:
         try:
             event_log = open(event_log_path, "a", encoding="utf-8")
@@ -81,19 +85,13 @@ def run_funasr_realtime(pipeline) -> None:
         msg = (message or "").strip()
         if msg:
             print(f"[FunASR] {msg}")
-        try:
-            pipeline.signals.status.emit(message, int(timeout_ms))
-        except Exception:
-            pass
+        pipeline.events.on_status(message, int(timeout_ms))
 
     def _error_emit(message: str) -> None:
         msg = (message or "").strip()
         if msg:
             print(f"[FunASR] ERROR: {msg}")
-        try:
-            pipeline.signals.error.emit(message)
-        except Exception:
-            pass
+        pipeline.events.on_error(message)
 
     def _log_event(kind: str, sentence: dict) -> None:
         if event_log is None:
@@ -121,10 +119,7 @@ def run_funasr_realtime(pipeline) -> None:
         t = (text or "").strip()
         if not t:
             return
-        try:
-            pipeline.signals.update_live_text.emit(sentence_id, "", t)
-        except Exception:
-            pass
+        pipeline.events.on_live_text(sentence_id, "", t)
         # Interim translation for long sentences: fire at every threshold
         # multiple (1x/2x/3x/...). Each fire translates the FULL current
         # interim, so a later fire overwrites the previous temporary
@@ -156,34 +151,36 @@ def run_funasr_realtime(pipeline) -> None:
         had_interim_tr = interim_fired > 0
         interim_fired = 0
         if getattr(pipeline, "translation_enabled", False) and getattr(pipeline, "translator", None) is not None:
-            try:
-                pipeline.signals.update_text.emit(cid, seg, "" if had_interim_tr else "(translating...)")
-            except Exception:
-                pass
+            pipeline.events.on_text(
+                cid,
+                seg,
+                "" if had_interim_tr else "(translating...)",
+            )
             try:
                 translate_executor.submit(pipeline._run_translation, seg, cid, None)
             except Exception:
                 pass
         else:
-            try:
-                pipeline.signals.update_text.emit(cid, seg, "")
-            except Exception:
-                pass
+            pipeline.events.on_text(cid, seg, "")
         sentence_id = cid + 1
 
     def _build_run_task(task_id: str) -> dict:
         params = {
             "format": "pcm",
             "sample_rate": sr,
-            "semantic_punctuation_enabled": bool(config.funasr_realtime_semantic_punctuation),
+            "semantic_punctuation_enabled": bool(
+                settings.funasr_realtime_semantic_punctuation
+            ),
         }
         # VAD-mode knobs (only effective when semantic punctuation is off)
-        max_silence = int(getattr(config, "funasr_realtime_max_sentence_silence", 0) or 0)
+        max_silence = int(
+            settings.funasr_realtime_max_sentence_silence or 0
+        )
         if max_silence > 0:
             params["max_sentence_silence"] = max_silence
-        if getattr(config, "funasr_realtime_multi_threshold", False):
+        if settings.funasr_realtime_multi_threshold:
             params["multi_threshold_mode_enabled"] = True
-        lang = (config.source_language or "").strip()
+        lang = (settings.source_language or "").strip()
         if lang:
             params["language_hints"] = [lang]
         return {

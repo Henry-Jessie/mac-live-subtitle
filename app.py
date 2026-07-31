@@ -1,8 +1,7 @@
-"""Application entry point (SubtitleWindow-only)."""
+"""Application entry point."""
 
-from ui.subtitle_window import main
+from ui_macos.application import main
 
 
 if __name__ == "__main__":
     main()
-

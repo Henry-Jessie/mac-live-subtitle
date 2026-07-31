@@ -1,48 +1,65 @@
 import threading
-
-from PyQt6.QtCore import QObject, pyqtSignal
+from typing import Protocol
 
 from core.audio_capture import AudioCapture
-from core.config import config
+from core.settings import PipelineSettings
 from core.translator import Translator
 
 
-class WorkerSignals(QObject):
-    update_text = pyqtSignal(int, str, str)  # (chunk_id, original, translated)
-    update_live_text = pyqtSignal(int, str, str)  # (chunk_id, confirmed, interim)
-    error = pyqtSignal(str)  # (message,)
-    status = pyqtSignal(str, int)  # (message, timeout_ms)
-    stopped = pyqtSignal()  # processing loop ended
+class PipelineEvents(Protocol):
+    def on_text(
+        self,
+        chunk_id: int,
+        original: str,
+        translated: str,
+    ) -> None: ...
+
+    def on_live_text(
+        self,
+        chunk_id: int,
+        confirmed: str,
+        interim: str,
+    ) -> None: ...
+
+    def on_error(self, message: str) -> None: ...
+
+    def on_status(self, message: str, timeout_ms: int) -> None: ...
+
+    def on_stopped(self) -> None: ...
 
 
-class Pipeline(QObject):
-    def __init__(self):
-        super().__init__()
-        self.signals = WorkerSignals()
+class Pipeline:
+    def __init__(
+        self,
+        settings: PipelineSettings,
+        events: PipelineEvents,
+    ):
+        self.settings = settings
+        self.events = events
         self.running = True
         self._pause_evt = threading.Event()
-        self.supports_soft_pause = config.asr_backend == "funasr_realtime"
+        self.supports_soft_pause = settings.asr_backend == "funasr_realtime"
 
-        config.print_config()
+        settings.print_summary()
 
         self.audio = AudioCapture(
-            sample_rate=config.sample_rate,
-            step_size=config.streaming_step_size,
+            sample_rate=settings.sample_rate,
+            step_size=settings.streaming_step_size,
         )
 
-        self.translation_enabled = config.translation_enabled
+        self.translation_enabled = settings.translation_enabled
 
         # LLM client needed only when translation is on
-        if config.translation_enabled:
+        if settings.translation_enabled:
             self.translator = Translator(
-                target_lang=config.target_lang,
-                base_url=config.api_base_url,
-                api_key=config.api_key,
-                model=config.model,
-                extra_body=config.translation_extra_body,
-                temperature=config.translation_temperature,
+                target_lang=settings.target_lang,
+                base_url=settings.api_base_url,
+                api_key=settings.api_key,
+                model=settings.model,
+                extra_body=settings.translation_extra_body,
+                temperature=settings.translation_temperature,
                 debug=self._translation_debug_enabled(),
-                thinking=config.translation_thinking,
+                thinking=settings.translation_thinking,
             )
         else:
             self.translator = None
@@ -83,15 +100,7 @@ class Pipeline(QObject):
         self._pause_evt.clear()
 
     def _translation_debug_enabled(self) -> bool:
-        try:
-            val = (config._get("translation", "debug", "") or "").strip().lower()
-            if val in ("true", "1", "yes", "on"):
-                return True
-            if val in ("false", "0", "no", "off"):
-                return False
-        except Exception:
-            pass
-        return False
+        return self.settings.translation_debug
 
     def _run_translation(self, text: str, chunk_id: int, trailing_context: str | None = None, interim: bool = False):
         # interim translations only refresh the translation slot of the live
@@ -105,35 +114,28 @@ class Pipeline(QObject):
                 trailing_context=trailing_context,
                 interim=interim,
             )
-            self.signals.update_text.emit(chunk_id, original, translated)
+            self.events.on_text(chunk_id, original, translated)
         except Exception as e:
-            self.signals.update_text.emit(chunk_id, original, "[Translation Failed]")
-            try:
-                self.signals.error.emit(f"Translation failed: {type(e).__name__}: {e}")
-            except Exception:
-                pass
+            self.events.on_text(chunk_id, original, "[Translation Failed]")
+            self.events.on_error(
+                f"Translation failed: {type(e).__name__}: {e}"
+            )
 
     def _signal_error(self, message: str) -> None:
         msg = (message or "").strip()
         if not msg:
             return
-        try:
-            self.signals.error.emit(msg)
-        except Exception:
-            pass
+        self.events.on_error(msg)
 
     def _signal_status(self, message: str, timeout_ms: int = 0) -> None:
         msg = (message or "").strip()
         if not msg:
             return
-        try:
-            self.signals.status.emit(msg, int(timeout_ms))
-        except Exception:
-            pass
+        self.events.on_status(msg, int(timeout_ms))
 
     def processing_loop(self):
         try:
-            backend = (config.asr_backend or "").strip().lower()
+            backend = (self.settings.asr_backend or "").strip().lower()
 
             if backend == "funasr_realtime":
                 from asr.funasr_realtime import run_funasr_realtime
@@ -146,7 +148,4 @@ class Pipeline(QObject):
         except Exception as e:
             self._signal_error(f"Pipeline error: {type(e).__name__}: {e}")
         finally:
-            try:
-                self.signals.stopped.emit()
-            except Exception:
-                pass
+            self.events.on_stopped()

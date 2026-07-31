@@ -2,7 +2,7 @@
 provider = deepseek
 ; Translation LLM API endpoint (OpenAI-compatible)
 base_url = https://api.deepseek.com/v1
-; Enter the provider API key in Settings; it is stored in macOS Keychain.
+; Enter the provider API key in Settings; it is stored in the app's local credentials file.
 model = deepseek-v4-flash
 ; DeepSeek V4 thinking mode: false = disabled (default, lower latency & cost),
 ; true = enabled (reasoning), auto = omit the parameter (server decides).
@@ -31,7 +31,7 @@ funasr_realtime_model = fun-asr-realtime
 ; Workspace-specific: wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
 ; Beijing and Singapore API keys are region-specific and not interchangeable
 funasr_realtime_ws_url = wss://dashscope.aliyuncs.com/api-ws/v1/inference
-; Enter the DashScope API key in Settings; it is stored in macOS Keychain.
+; Enter the DashScope API key in Settings; it is stored in the app's local credentials file.
 ; Semantic punctuation prediction (server-side semantic segmentation:
 ; more accurate sentence boundaries, longer segments, higher latency).
 ; When false, VAD segmentation is used (shorter segments, lower latency,
@@ -60,6 +60,8 @@ streaming_step_size = 0.2
 
 [display]
 always_on_top = true
+; Subtitle background opacity from 0.4 to 1.0
+background_opacity = 0.82
 ; Font size in px for original (source) text
 original_font_size = 13
 ; Font size in px for translated text

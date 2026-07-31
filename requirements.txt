@@ -1,10 +1,8 @@
-PyQt6
 numpy
 openai>=1.52.0
 httpx
 tiktoken
 json-repair
-keyring>=25.7,<26
 websocket-client
 pyobjc-framework-CoreAudio; sys_platform == 'darwin'
 pyobjc-framework-CoreMedia; sys_platform == 'darwin'

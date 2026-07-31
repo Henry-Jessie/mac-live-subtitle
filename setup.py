@@ -15,6 +15,16 @@ class AppBuild(py2app_command):
 
 APP = ["app.py"]
 PYTHON_LIBRARY_DIR = Path(sys.base_prefix) / "lib"
+SITE_PACKAGES_DIR = (
+    Path(sys.prefix)
+    / "lib"
+    / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    / "site-packages"
+)
+MYPYC_MODULES = [
+    path.name.split(".", 1)[0]
+    for path in SITE_PACKAGES_DIR.glob("*__mypyc*.so")
+]
 PYTHON_LIBRARY_NAMES = (
     "libbz2.dylib",
     "libcrypto.3.dylib",
@@ -32,6 +42,7 @@ OPTIONS = {
     "iconfile": "assets/AppIcon.icns",
     "includes": [
         "tiktoken_ext.openai_public",
+        *MYPYC_MODULES,
     ],
     "frameworks": [
         str(PYTHON_LIBRARY_DIR / name)
@@ -42,11 +53,6 @@ OPTIONS = {
         "assets",
         "config.ini.example",
     ],
-    "qt_plugins": [
-        "platforms",
-        "styles",
-        "imageformats",
-    ],
     "plist": {
         "CFBundleName": "Mac Live Subtitle",
         "CFBundleDisplayName": "Mac Live Subtitle",
@@ -55,7 +61,7 @@ OPTIONS = {
         "CFBundleVersion": "1",
         "LSApplicationCategoryType": "public.app-category.utilities",
         "LSMinimumSystemVersion": "13.0",
-        "LSUIElement": False,
+        "LSUIElement": True,
         "NSHighResolutionCapable": True,
         "NSScreenCaptureUsageDescription": (
             "Mac Live Subtitle captures system audio to generate live subtitles."

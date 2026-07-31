@@ -14,18 +14,17 @@ https://github.com/user-attachments/assets/2faca983-a76b-4591-95a8-5a11c1233a83
 ## Quick Start
 
 ```bash
-# Install
 git clone https://github.com/Henry-Jessie/mac-live-subtitle.git
 cd mac-live-subtitle
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 cp config.ini.example config.ini
 
-# Run
-python app.py
+uv run python app.py
 ```
 
-Open Settings and enter the ASR and translation API keys. They are stored in macOS Keychain.
+The app appears in the menu bar rather than the Dock. Open **Settings…** from
+the menu-bar menu and enter the ASR and translation API keys. They are stored
+in an application-specific local credentials file.
 
 On first use, allow Screen Recording (shown as Screen & System Audio Recording on newer macOS versions), then restart the app. BlackHole and a Multi-Output Device are no longer required.
 
@@ -56,11 +55,11 @@ Translation can be toggled off — then only the segmented source text is displa
 
 A sliding context window (capped by token count) feeds recent source/translation pairs into every request, keeping terminology consistent across sentences. Powered by any OpenAI-compatible Chat Completions API (default: DeepSeek `deepseek-v4-flash`). Supports configurable temperature, a dedicated `thinking` toggle for DeepSeek V4 reasoning, extra body parameters, and reasoning-model `<think>` tag stripping.
 
-### Single-window macOS-native UI
+### Native menu-bar UI
 
-- Unified PyQt6 window with play/pause/stop controls
-- Tabbed settings popover (Transcription / Translation / Display) with provider presets, configurable font sizes, and live preview
-- Pushpin button for always-on-top, visible across all macOS Spaces via PyObjC
+- AppKit menu-bar item with a native three-action menu for Settings, the subtitle window, and Quit
+- Floating black subtitle panel with play/pause, stop, pin, and settings controls; it can remain visible across Spaces and full-screen applications
+- Native preference-style Transcription, Translation, and Display settings with toolbar navigation, grouped forms, provider presets, locally stored password fields, connection tests, and live font and background-opacity preview
 - Soft pause/resume (keeps WebSocket alive) and automatic reconnection with exponential backoff
 
 <details>
@@ -77,11 +76,32 @@ System audio capture uses ScreenCaptureKit and requires macOS 13 or later.
 
 ## Usage
 
-Run `python app.py`. Use **Play** / **Pause** / **Stop** to control the pipeline, **Gear** for settings, **Pin** for always-on-top. API keys entered in Settings are stored in macOS Keychain; clear a key field and save to remove it. Each API key has a **Test** button that checks the current field without saving it; the FunASR test performs only an authenticated WebSocket handshake and sends no audio. Most settings can be changed in the settings popover; advanced settings (`extra_body`, VAD parameters) require editing `config.ini`. ASR/translation setting changes take effect after restarting the pipeline; display settings (font size) apply immediately.
+Run `uv run python app.py`, then use the subtitle-panel toolbar to start,
+pause, resume, or stop the pipeline. The toolbar also controls pinning and
+opens Settings. The native menu-bar menu opens Settings or the subtitle
+window and quits the application. The subtitle panel starts visible; closing
+it hides it until **Subtitle Window** is selected from the menu.
+
+API keys entered in Settings are stored in
+`~/Library/Application Support/Mac Live Subtitle/credentials.json`. The file is
+restricted to the current macOS user (`0600`) and does not use Keychain, so it
+does not trigger password authorization prompts. A stored key appears as a
+fixed-length mask; use the eye button to reveal it on demand. Entering a value
+replaces the stored key. Reveal and clear the field, then save, to remove it.
+Existing Keychain items are not imported, so enter each required key once after
+upgrading from a Keychain-based build.
+Each key has a **Test** button that checks the current field without saving it;
+the FunASR test performs an authenticated WebSocket handshake and sends no
+audio. ASR and translation changes take effect on the next start. Display
+settings apply immediately.
 
 ## Configuration
 
-All settings are stored in `config.ini` and can be edited either in the settings popover or by hand. Copy `config.ini.example` as a starting point:
+Ordinary settings are stored in macOS `NSUserDefaults` under
+`com.henryjessie.MacLiveSubtitle`; API keys are stored separately in the local
+credentials file. On the first native launch, an existing `config.ini` is
+imported once and is left unchanged. Copy `config.ini.example` before that
+first launch when migrating an existing source checkout:
 
 ```bash
 cp config.ini.example config.ini
@@ -105,7 +125,7 @@ cp config.ini.example config.ini
 
 | Key | Description | Default |
 |:---|:---|:---|
-| `provider` | Stable provider ID for provider-specific Keychain entries (`deepseek`, `google`, or `custom`) | `deepseek` |
+| `provider` | Stable provider ID for provider-specific credential entries (`deepseek`, `google`, or `custom`) | `deepseek` |
 | `base_url` | OpenAI-compatible API endpoint | `https://api.deepseek.com/v1` |
 | `model` | Model identifier | `deepseek-v4-flash` |
 | `target_lang` | Target language for translation | `Simplified Chinese` |
@@ -114,7 +134,10 @@ cp config.ini.example config.ini
 | `temperature` | Sampling temperature | `1.0` |
 | `extra_body` | Extra JSON merged into API calls (e.g. `{"thinking": {"type": "disabled"}}`) | *(empty)* |
 
-> **API key storage**: provider-specific credentials are read only from macOS Keychain. A legacy literal key in `config.ini` remains readable for migration and is removed after the next successful Settings save.
+> **API key storage**: provider-specific credentials are read only from the
+> application credentials file. Literal API keys are never stored in
+> `NSUserDefaults` or `config.ini`. The file is plaintext and readable by
+> processes running as the same macOS user.
 
 ### `[audio]` / `[display]`
 
@@ -123,12 +146,14 @@ cp config.ini.example config.ini
 | `sample_rate` | audio | ScreenCaptureKit output sample rate in Hz | `16000` |
 | `streaming_step_size` | audio | Audio frame duration in seconds | `0.2` |
 | `always_on_top` | display | Start with window pinned on top | `true` |
+| `background_opacity` | display | Black subtitle background opacity (`0.4`–`1.0`) | `0.82` |
 | `original_font_size` | display | Font size (px) for source text | `13` |
 | `translated_font_size` | display | Font size (px) for translated text | `17` |
 
 ## Build the macOS application
 
-The current PyQt transition build uses `py2app`. Releases are distributed only as a standalone `.app`; `uv` remains a development and build tool. The transition build remains a regular Dock application, while the later AppKit menu-bar build will set `LSUIElement`.
+The AppKit menu-bar application is packaged with `py2app`. Releases are
+standalone `.app` bundles; `uv` is used only for development and builds.
 
 ```bash
 uv sync --group build
@@ -140,9 +165,15 @@ uv run python setup.py py2app --alias
 uv run python setup.py py2app
 ```
 
-Delete the generated `build/` and `dist/` directories before switching between alias and standalone modes. The result is `dist/Mac Live Subtitle.app`. Packaged settings are written to `~/Library/Application Support/Mac Live Subtitle/config.ini`; API keys remain in Keychain. The build does not include the ignored development `config.ini`.
+The result is `dist/Mac Live Subtitle.app`. It runs as an `LSUIElement`
+application, so it has a menu-bar item and no Dock icon. Packaged and source
+runs use the same `NSUserDefaults` suite and local credentials file. The
+ignored development `config.ini` is not included in the bundle.
 
-py2app applies an ad-hoc signature, which is suitable for running this local transition build. Public distribution still requires a Developer ID Application signature and Apple notarization.
+py2app applies an ad-hoc signature suitable for local testing. This project
+uses one stable self-signed identity for open-source builds so ScreenCaptureKit
+authorization survives updates. These builds cannot be notarized and require
+the standard **Open Anyway** flow on first installation.
 
 ## Troubleshooting
 
@@ -186,21 +217,25 @@ The pipeline has three concurrent stages:
 
 2. **Streaming ASR** — the FunASR backend opens a duplex WebSocket to DashScope (`run-task` → binary PCM16 frames → `result-generated` events). Each event carries the full text of the current sentence: interim results replace the live subtitle line, and `sentence_end` commits the sentence verbatim. No client-side segmentation.
 
-3. **Translation & display** — committed sentences are translated by the LLM endpoint (sliding context window) on a single serial executor, so interim and final translations can never arrive out of order. Growing sentences fire temporary translations at length thresholds; the final translation overwrites them. Results reach the UI via pipeline-identity-guarded Qt signals and appear as timestamped original/translation pairs with follow-tail auto-scroll.
+3. **Translation & display** — committed sentences are translated by the LLM endpoint (sliding context window) on a single serial executor, so interim and final translations cannot arrive out of order. Growing sentences fire temporary translations at length thresholds; the final translation overwrites them. A UI-neutral event sink dispatches results onto AppKit's main thread and rejects late events from a retired pipeline.
 
 ---
 
 ## Privacy & Data Flow
 
-> **All data is cloud-processed.** Audio is streamed to a cloud ASR service; transcribed text is sent to an external LLM for translation. No data stays local. Be mindful of this in sensitive contexts — speech content passes through third-party servers subject to their privacy policies. An active internet connection is required.
+> **Speech data is cloud-processed.** Audio is streamed to the configured ASR
+> service. When translation is enabled, transcribed text is sent to the
+> configured translation provider. Transcripts are not persisted by default;
+> the optional FunASR event log writes source text locally when configured.
 
 ## Roadmap
 
-- **Native macOS rewrite** — AppKit menu-bar controls and floating subtitle panel, followed by Developer ID signing and notarization
+- Developer ID signing and notarization
+- Additional streaming ASR providers
 
 ## Acknowledgments
 
-Inspired by and forked from [Real-Time Translator](https://github.com/Vanyoo/realtime-subtitle) by Van (local ASR + dashboard/overlay architecture). This project replaces local ASR with cloud streaming, and consolidates the UI into a single macOS-native window.
+Inspired by and forked from [Real-Time Translator](https://github.com/Vanyoo/realtime-subtitle) by Van (local ASR + dashboard/overlay architecture). This project replaces local ASR with cloud streaming and uses an AppKit menu-bar interface with a separate floating subtitle panel.
 
 ## License
 
