@@ -13,15 +13,15 @@ English | [简体中文](README.zh-CN.md)
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-Real-time system-audio transcription and optional translation in a native
-macOS menu-bar app. Mac Live Subtitle captures audio through
-ScreenCaptureKit, sends it to FunASR Realtime, and keeps a resizable subtitle
-panel above meetings, lectures, videos, and games.
+Mac Live Subtitle is a native macOS menu-bar app for real-time system-audio
+transcription and optional translation. It keeps a resizable subtitle panel
+above meetings, lectures, videos, and games.
 
 ### [Download the latest release →](https://github.com/Henry-Jessie/mac-live-subtitle/releases/latest)
 
-The packaged app requires **macOS 13 or later** and an **Apple Silicon Mac**.
-It does not require Python, BlackHole, a Multi-Output Device, or a local GPU.
+Requires **macOS 13 or later** and an **Apple Silicon Mac**. Native capture
+requires no Python, BlackHole, Multi-Output Device, or local GPU. BlackHole is
+available as a compatibility mode for protected players such as Apple TV.
 
 <p align="center">
   <img src="docs/images/subtitle-window.png" width="760" alt="Floating Mac Live Subtitle window">
@@ -29,40 +29,32 @@ It does not require Python, BlackHole, a Multi-Output Device, or a local GPU.
 
 ## Highlights
 
-- Native AppKit menu-bar app with no Dock icon.
-- Direct system-audio capture through ScreenCaptureKit.
+- Native AppKit menu-bar app and floating subtitle panel.
+- Native ScreenCaptureKit audio capture with optional BlackHole compatibility.
 - Streaming FunASR Realtime transcription with interim and final results.
-- Optional translation through DeepSeek, Gemini, or a custom
-  OpenAI-compatible endpoint.
-- Floating black subtitle panel with play, pause, stop, pin, and settings
-  controls.
-- Adjustable background opacity and separate source/translation font sizes.
-- English and Chinese settings interface.
-- API keys stored locally without Keychain authorization prompts.
+- Optional DeepSeek, Gemini, or custom OpenAI-compatible translation.
+- Play, pause, stop, pin, opacity, font, and bilingual-settings controls.
+
+## Demo
+
+<p align="center">
+  <img src="docs/images/demo.gif" width="760" alt="Live transcription, translation, and display controls">
+</p>
 
 ## Install
 
-1. Download `Mac-Live-Subtitle-v0.1.0-macos-arm64.zip` from
+1. Download the latest macOS arm64 ZIP from
    [GitHub Releases](https://github.com/Henry-Jessie/mac-live-subtitle/releases/latest).
 2. Unzip it and move **Mac Live Subtitle.app** to `/Applications`.
-3. Open the app once. Because the current release is self-signed and not
-   notarized by Apple, macOS may block the first launch.
-4. Open **System Settings → Privacy & Security**, scroll to **Security**, then
+3. Try to open the app once. macOS may block the first launch.
+4. Open **System Settings → Privacy & Security**, scroll to **Security**, and
    choose **Open Anyway** for Mac Live Subtitle.
-5. Open the app again. Its icon appears in the menu bar, and the subtitle
-   window opens without starting capture.
+5. Open the app again. Its menu-bar icon and subtitle window will appear
+   without starting capture.
 
-The release page includes `SHA256SUMS.txt` so the downloaded archive can be
-checked before installation:
+## Configure
 
-```bash
-shasum -a 256 -c SHA256SUMS.txt
-```
-
-## Configure services
-
-Open **Settings** from either the menu-bar menu or the subtitle-window gear
-button.
+Open **Settings** from the menu-bar menu or the subtitle-window gear button.
 
 ### Transcription
 
@@ -71,28 +63,30 @@ FunASR Realtime requires an Alibaba Cloud Model Studio API key:
 - [China API key guide](https://help.aliyun.com/zh/model-studio/get-api-key)
 - [International API key guide](https://www.alibabacloud.com/help/en/model-studio/get-api-key)
 
-Enter the key under **Settings → Transcription**. The API key and WebSocket
-endpoint must belong to the same Alibaba Cloud region. The built-in China and
-International guide buttons open the same documentation.
-
-Semantic punctuation gives more natural sentence boundaries but may produce
-longer segments. Advanced settings also provide a VAD mode, a silence
-threshold, multi-threshold VAD, and interim translation intervals.
+Under **Settings → Transcription**, choose China (Beijing) or International
+(Singapore), then enter a key from the same region. The app selects the
+matching WebSocket endpoint automatically. Advanced settings control sentence
+segmentation and the audio-capture backend. Interim translation is scheduled
+automatically, while complete sentences are translated immediately.
 
 ### Translation
 
-Translation is optional. Choose one of these providers under
-**Settings → Translation**:
+Translation is optional. Choose a target language and one provider:
 
-- **DeepSeek** — preconfigured for the DeepSeek OpenAI-compatible API;
-  [create an API key](https://platform.deepseek.com/api_keys).
-- **Gemini** — preconfigured for the Gemini OpenAI-compatible API;
-  [create an API key in Google AI Studio](https://aistudio.google.com/app/apikey).
-- **Custom** — enter any compatible Base URL and model name.
+- [DeepSeek](https://platform.deepseek.com/api_keys)
+- [Gemini](https://aistudio.google.com/app/apikey)
+- **Custom** — enter an OpenAI-compatible Base URL and model name.
 
-Select a target language, enter the provider API key, and use
-**Test Connection** before saving. Turning translation off leaves the
-original-language subtitles enabled.
+Enter the provider API key and use **Test Connection** before saving. Turning
+translation off leaves the original-language subtitles enabled.
+
+Transcription, translation, service-region, and audio-capture changes take
+effect the next time capture starts. Subtitle font, opacity, and pinning
+changes apply immediately.
+
+<p align="center">
+  <img src="docs/images/settings-transcription.png" width="760" alt="Transcription settings">
+</p>
 
 <p align="center">
   <img src="docs/images/settings-translation.png" width="49%" alt="Translation settings">
@@ -101,54 +95,56 @@ original-language subtitles enabled.
 
 ## Use
 
-Press **Play** in the subtitle window to start capture. On first use, approve
-the macOS system-audio prompt. If the permission was dismissed, enable
-**Mac Live Subtitle** under:
+Press **Play** to start capture. Native capture requires permission under:
 
 **System Settings → Privacy & Security → Screen & System Audio Recording**
 
 Quit and reopen the app after changing this permission.
 
+BlackHole Compatibility instead uses **Microphone** permission because macOS
+treats the virtual input as a microphone device.
+
 | Control | Action |
 |:--|:--|
-| Play / Pause | Start capture, pause a live session, or resume it |
+| Play / Pause | Start, pause, or resume the current session |
 | Stop | Close the current ASR and translation session |
 | Pin | Keep the subtitle panel above other windows |
-| Settings | Open transcription, translation, and display settings |
 
-The top strip of the subtitle panel moves the window. Its edges and corners
-resize it. Closing the panel hides it; choose **Subtitle Window** from the
-menu-bar menu to show it again.
+Drag the panel's top strip to move it and its edges or corners to resize it.
+Closing the panel hides it; choose **Subtitle Window** from the menu-bar menu
+to show it again.
 
-## Privacy and data flow
+## Privacy
 
-- System audio is streamed to the configured Alibaba Cloud FunASR service.
-- When translation is enabled, transcribed text is sent to the selected
-  translation provider.
+- System audio is streamed to Alibaba Cloud FunASR. When translation is
+  enabled, transcribed text is sent to the selected translation provider.
 - Transcripts are not stored by default. The optional FunASR event log writes
-  source text locally when explicitly enabled.
-- API keys are stored at
+  source text locally only when explicitly enabled.
+- API keys are stored as local plaintext at
   `~/Library/Application Support/Mac Live Subtitle/credentials.json`.
-  The directory is limited to the current macOS user and the file uses mode
-  `0600`.
-- The credentials file is local plaintext. Other processes running as the
-  same macOS user may be able to read it.
+  The directory uses mode `0700` and the file uses `0600`; other processes
+  running as the same macOS user may still be able to read it.
 - The app does not read or modify existing Keychain items.
 
 ## Troubleshooting
 
 <details>
-<summary><b>The app cannot be opened</b></summary>
+<summary><b>Apple TV turns black during transcription</b></summary>
 
-Try opening it once, then go to **System Settings → Privacy & Security** and
-choose **Open Anyway**. The current public build uses a stable self-signed
-certificate so macOS can recognize later updates, but it is not Apple
-notarized.
+Protected Apple TV video is hidden while ScreenCaptureKit is active. To keep
+Apple TV playback visible during transcription, install
+[BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole), create a
+Multi-Output Device containing the built-in output and BlackHole, make the
+built-in output the primary device, select that Multi-Output Device as the
+macOS sound output, and choose **BlackHole Compatibility** under
+**Settings → Transcription → Advanced**. After use, switch the macOS sound
+output back to the preferred device. The app detects BlackHole on each start;
+no device number is saved.
 
 </details>
 
 <details>
-<summary><b>Screen audio permission is enabled but capture is denied</b></summary>
+<summary><b>Permission is enabled but capture is denied</b></summary>
 
 Confirm that the permission belongs to **Mac Live Subtitle.app**, not Terminal
 or a source-Python process. Quit the app completely after changing the
@@ -159,10 +155,8 @@ permission, then reopen it from `/Applications`.
 <details>
 <summary><b>FunASR does not connect</b></summary>
 
-Check the API key and WebSocket endpoint under
-**Settings → Transcription**. Region-specific keys cannot be used with an
-endpoint from another region. Connection and server errors appear in the
-subtitle-window banner.
+Check the API key and service region under **Settings → Transcription**.
+Region-specific keys cannot be used with another service region.
 
 </details>
 
@@ -170,24 +164,23 @@ subtitle-window banner.
 <summary><b>Translation does not appear</b></summary>
 
 Confirm that translation is enabled, the selected provider has an API key,
-and the target language is filled in. For Custom providers, also verify the
-Base URL and model name under Advanced.
+and the target language is filled in. Custom providers also require a Base
+URL and model name under Advanced.
 
 </details>
 
 <details>
 <summary><b>Sentences are too long</b></summary>
 
-Disable semantic punctuation to use VAD segmentation, then lower the
-maximum-silence value. Multi-threshold VAD can further limit unusually long
-segments. Interim translation can provide updates while a final sentence is
-still growing.
+Disable semantic punctuation to use VAD segmentation, then lower maximum
+silence. Multi-threshold VAD can further limit long segments; interim
+translation can update the translation before the final sentence ends.
 
 </details>
 
-## Run from source
+## For developers
 
-Source development requires macOS, Python 3.10 or later, and
+Development requires macOS, Python 3.10 or later, and
 [uv](https://docs.astral.sh/uv/):
 
 ```bash
@@ -195,53 +188,17 @@ git clone https://github.com/Henry-Jessie/mac-live-subtitle.git
 cd mac-live-subtitle
 uv sync --group build
 uv run python app.py
-```
-
-Source and packaged runs use the same `NSUserDefaults` suite and local
-credentials file. An existing `config.ini` is imported once on the first
-native launch and is not rewritten.
-
-Run the tests with:
-
-```bash
 uv run python -m unittest discover -s tests
 ```
 
-## Build a release
-
-The project uses py2app and a stable local signing identity. The release
-script performs a clean build, signs the bundle, verifies it, creates the
-macOS ZIP, writes its SHA-256 checksum, extracts it, and verifies the
-extracted bundle again:
-
-```bash
-./scripts/package_release.sh 0.1.0
-```
-
-Artifacts are written to `release/v0.1.0/`. The signing identity defaults to
-`Mac Live Subtitle Local Signing` and can be changed with
-`CODESIGN_IDENTITY`.
-
-The current public build is Apple Silicon only. Developer ID signing and
-Apple notarization remain outside the `v0.1.0` release.
-
-## How it works
-
-1. **Capture** — ScreenCaptureKit supplies system audio as variable-sized
-   sample buffers. The capture layer converts them into 16 kHz mono PCM
-   frames.
-2. **Transcription** — FunASR Realtime receives the PCM stream over WebSocket.
-   Interim events update the current line and final events commit a sentence.
-3. **Translation** — a serial translation executor sends committed text to
-   the selected provider with a bounded context window, then dispatches UI
-   updates back to AppKit's main thread.
+Release maintainers can build, sign, archive, and verify `v0.1.0` with
+`./scripts/package_release.sh 0.1.0`; the configured signing identity is
+required.
 
 ## Acknowledgments
 
 Inspired by and forked from
 [Real-Time Translator](https://github.com/Vanyoo/realtime-subtitle) by Van.
-Mac Live Subtitle replaces the original local-ASR and PyQt interface with
-cloud streaming ASR, ScreenCaptureKit, and a native AppKit menu-bar app.
 
 ## License
 
