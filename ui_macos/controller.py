@@ -7,6 +7,9 @@ from core.pipeline import Pipeline
 from ui_macos.events import AppKitPipelineEvents
 
 
+STOP_TIMEOUT_SECONDS = 15
+
+
 class NativeApplicationController:
     def __init__(self, settings_store, subtitle_panel):
         self.lifecycle = ApplicationController()
@@ -48,18 +51,24 @@ class NativeApplicationController:
         self.stop_completion = completion
         self._notify_state()
         if pipeline is None:
-            self._finish_stop(None)
+            self.lifecycle.complete_stop(None)
+            self._notify_state()
+            self._finish_stop_completion()
             return
 
         def stop_pipeline():
             pipeline.stop()
-            AppHelper.callAfter(self._finish_stop, pipeline)
 
         self.stop_thread = threading.Thread(
             target=stop_pipeline,
             daemon=True,
         )
         self.stop_thread.start()
+        AppHelper.callLater(
+            STOP_TIMEOUT_SECONDS,
+            self._stop_timed_out,
+            pipeline,
+        )
 
     def _start_pipeline(self, *, preserve_display: bool) -> None:
         self.start_generation += 1
@@ -127,13 +136,23 @@ class NativeApplicationController:
         )
         self._notify_state()
 
-    def _finish_stop(self, pipeline) -> None:
-        self.lifecycle.complete_stop(pipeline)
-        self._notify_state()
+    def _finish_stop_completion(self) -> None:
         completion = self.stop_completion
         self.stop_completion = None
         if completion is not None:
             completion()
+
+    def _stop_timed_out(self, pipeline) -> None:
+        if (
+            self.state is not ApplicationState.STOPPING
+            or not self.lifecycle.accepts(pipeline)
+        ):
+            return
+        self.lifecycle.record_error(
+            pipeline,
+            f"Stop timed out after {STOP_TIMEOUT_SECONDS} seconds",
+        )
+        self.pipeline_stopped(pipeline)
 
     def pipeline_text(
         self,
@@ -188,10 +207,7 @@ class NativeApplicationController:
                 timeout_ms=0,
             )
         self._notify_state()
-        completion = self.stop_completion
-        self.stop_completion = None
-        if completion is not None:
-            completion()
+        self._finish_stop_completion()
 
     def _notify_state(self) -> None:
         if self.state_changed is not None:

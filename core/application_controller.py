@@ -73,12 +73,6 @@ class ApplicationController:
         self.state = ApplicationState.RUNNING
         return True
 
-    def stop(self) -> None:
-        pipeline = self.begin_stop()
-        if pipeline is not None:
-            pipeline.stop()
-        self.complete_stop(pipeline)
-
     def begin_stop(self) -> ManagedPipeline | None:
         pipeline = self.pipeline
         self.last_error = ""

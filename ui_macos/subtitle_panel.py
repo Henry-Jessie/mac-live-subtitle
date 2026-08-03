@@ -18,6 +18,8 @@ from AppKit import (
     NSItalicFontMask,
     NSLayoutAttributeLeading,
     NSLayoutConstraint,
+    NSLayoutConstraintOrientationHorizontal,
+    NSLayoutPriorityDefaultLow,
     NSLineBreakByWordWrapping,
     NSMakeRect,
     NSPanel,
@@ -89,6 +91,10 @@ def _wrapping_label(text: str = ""):
     label.setLineBreakMode_(NSLineBreakByWordWrapping)
     label.setUsesSingleLineMode_(False)
     label.setMaximumNumberOfLines_(0)
+    label.setContentCompressionResistancePriority_forOrientation_(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientationHorizontal,
+    )
     return label
 
 
@@ -293,7 +299,6 @@ class SubtitlePanel:
         self.rows = {}
         self.ordered_ids = []
         self.banner_generation = 0
-        self.visibility_changed = None
         self.toggle_running = None
         self.stop = None
         self.open_settings = None
@@ -543,7 +548,12 @@ class SubtitlePanel:
             ]
         )
 
+        self.layout_pending = False
+        self.follow_tail_after_layout = True
+        self.history_anchor = None
+        self.last_document_height = self.document_view.frame().size.height
         clip_view = self.scroll_view.contentView()
+        self.last_viewport_height = clip_view.bounds().size.height
         clip_view.setPostsFrameChangedNotifications_(True)
         self.viewport_observer = (
             NSNotificationCenter.defaultCenter()
@@ -653,19 +663,6 @@ class SubtitlePanel:
 
     def show(self) -> None:
         self.window.orderFrontRegardless()
-        if self.visibility_changed is not None:
-            self.visibility_changed(True)
-
-    def hide(self) -> None:
-        self.window.orderOut_(None)
-        if self.visibility_changed is not None:
-            self.visibility_changed(False)
-
-    def toggle(self) -> None:
-        if self.is_visible():
-            self.hide()
-        else:
-            self.show()
 
     def close(self) -> None:
         NSNotificationCenter.defaultCenter().removeObserver_(
@@ -708,9 +705,8 @@ class SubtitlePanel:
         original_text: str,
         translated_text: str,
     ) -> None:
-        translated = "" if translated_text == " " else translated_text
         row = self._row(chunk_id)
-        row.update_final(original_text, translated)
+        row.update_final(original_text, translated_text)
         self._content_changed()
 
     def update_live_text(
@@ -722,6 +718,36 @@ class SubtitlePanel:
         row = self._row(chunk_id)
         row.update_live(confirmed_text or "", interim_text or "")
         self._content_changed()
+
+    def _row_rect_in_document(self, row: SubtitleRow):
+        return self.document_view.convertRect_fromView_(
+            row.view.bounds(),
+            row.view,
+        )
+
+    def _capture_history_anchor(self, removed_id: int) -> None:
+        if self._is_near_bottom():
+            self.history_anchor = None
+            return
+        if (
+            self.history_anchor is not None
+            and self.history_anchor[0] != removed_id
+        ):
+            return
+
+        self.history_anchor = None
+        viewport_top = self.scroll_view.contentView().bounds().origin.y
+        for chunk_id in self.ordered_ids:
+            if chunk_id == removed_id:
+                continue
+            row = self.rows[chunk_id]
+            rect = self._row_rect_in_document(row)
+            if rect.origin.y + rect.size.height >= viewport_top:
+                self.history_anchor = (
+                    chunk_id,
+                    rect.origin.y - viewport_top,
+                )
+                return
 
     def _row(self, chunk_id: int) -> SubtitleRow:
         existing = self.rows.get(chunk_id)
@@ -753,13 +779,16 @@ class SubtitlePanel:
         ).setActive_(True)
 
         if len(self.ordered_ids) > 200:
-            oldest_id = self.ordered_ids.pop(0)
+            oldest_id = self.ordered_ids[0]
+            self._capture_history_anchor(oldest_id)
+            self.ordered_ids.pop(0)
             oldest = self.rows.pop(oldest_id)
             self.rows_stack.removeArrangedSubview_(oldest.view)
             oldest.view.removeFromSuperview()
         return row
 
     def clear(self) -> None:
+        self.history_anchor = None
         for row in self.rows.values():
             self.rows_stack.removeArrangedSubview_(row.view)
             row.view.removeFromSuperview()
@@ -801,33 +830,47 @@ class SubtitlePanel:
         self._content_changed()
 
     def _content_changed(self) -> None:
-        AppHelper.callAfter(self._scroll_to_bottom)
+        if self.layout_pending:
+            return
+        self.follow_tail_after_layout = self._is_near_bottom()
+        self.layout_pending = True
+        AppHelper.callAfter(self._layout_content)
 
-    def _scroll_to_bottom(self) -> None:
-        self.window.contentView().layoutSubtreeIfNeeded()
+    def _is_near_bottom(self) -> bool:
         clip = self.scroll_view.contentView()
-        viewport_width = clip.bounds().size.width
-        viewport_height = clip.bounds().size.height
-        self.document_view.setFrameSize_(
-            (
-                viewport_width,
-                max(
-                    viewport_height,
-                    self.document_view.frame().size.height,
-                ),
+        bottom = max(
+            0,
+            self.last_document_height - self.last_viewport_height,
+        )
+        return clip.bounds().origin.y >= max(0, bottom - 24)
+
+    def _layout_content(self) -> None:
+        try:
+            near_bottom = self._is_near_bottom()
+            follow_tail = (
+                self.follow_tail_after_layout
+                and near_bottom
             )
-        )
-        self.window.contentView().layoutSubtreeIfNeeded()
-        document_height = max(
-            viewport_height,
-            self.rows_stack.fittingSize().height + 24,
-        )
-        self.document_view.setFrameSize_(
-            (viewport_width, document_height)
-        )
-        self.window.contentView().layoutSubtreeIfNeeded()
-        document_height = self.document_view.frame().size.height
-        clip.scrollToPoint_(
-            (0, max(0, document_height - viewport_height))
-        )
-        self.scroll_view.reflectScrolledClipView_(clip)
+            self.window.contentView().layoutSubtreeIfNeeded()
+            clip = self.scroll_view.contentView()
+            viewport_height = clip.bounds().size.height
+            document_height = self.document_view.frame().size.height
+            bottom = max(0, document_height - viewport_height)
+            if follow_tail:
+                clip.scrollToPoint_((0, bottom))
+            elif self.history_anchor is not None and not near_bottom:
+                chunk_id, viewport_offset = self.history_anchor
+                row = self.rows.get(chunk_id)
+                if row is not None:
+                    anchor_y = self._row_rect_in_document(row).origin.y
+                    target_y = min(
+                        bottom,
+                        max(0, anchor_y - viewport_offset),
+                    )
+                    clip.scrollToPoint_((0, target_y))
+            self.scroll_view.reflectScrolledClipView_(clip)
+            self.last_document_height = document_height
+            self.last_viewport_height = viewport_height
+        finally:
+            self.history_anchor = None
+            self.layout_pending = False

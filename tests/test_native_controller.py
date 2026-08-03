@@ -2,7 +2,10 @@ import unittest
 from unittest.mock import patch
 
 from core.application_controller import ApplicationState
-from ui_macos.controller import NativeApplicationController
+from ui_macos.controller import (
+    STOP_TIMEOUT_SECONDS,
+    NativeApplicationController,
+)
 
 
 class FakePanel:
@@ -65,6 +68,11 @@ class NativeApplicationControllerTests(unittest.TestCase):
         )
         self.states = []
         self.controller.state_changed = self.states.append
+        self.call_later_patcher = patch(
+            "ui_macos.controller.AppHelper.callLater"
+        )
+        self.call_later = self.call_later_patcher.start()
+        self.addCleanup(self.call_later_patcher.stop)
 
     def test_pipeline_callbacks_reject_retired_pipeline(self):
         current = FakePipeline()
@@ -113,9 +121,70 @@ class NativeApplicationControllerTests(unittest.TestCase):
             self.controller.stop(lambda: callbacks.append("done"))
             self.controller.stop_thread.join(timeout=1)
 
-        self.assertIs(self.controller.state, ApplicationState.IDLE)
+        self.assertIs(self.controller.state, ApplicationState.STOPPING)
         self.assertEqual(pipeline.stopped, 1)
+        self.assertEqual(callbacks, [])
+
+        self.controller.pipeline_stopped(pipeline)
+
+        self.assertIs(self.controller.state, ApplicationState.IDLE)
         self.assertEqual(callbacks, ["done"])
+
+        _, watchdog, scheduled_pipeline = self.call_later.call_args.args
+        watchdog(scheduled_pipeline)
+        self.assertIs(self.controller.state, ApplicationState.IDLE)
+        self.assertEqual(callbacks, ["done"])
+
+    def test_stop_timeout_detaches_pipeline_and_completes(self):
+        pipeline = FakePipeline()
+        self.controller.lifecycle.begin_start()
+        self.controller._pipeline_ready(
+            self.controller.start_generation,
+            pipeline,
+        )
+        callbacks = []
+
+        self.controller.stop(lambda: callbacks.append("done"))
+        self.controller.stop_thread.join(timeout=1)
+        delay, watchdog, scheduled_pipeline = self.call_later.call_args.args
+
+        self.assertEqual(delay, STOP_TIMEOUT_SECONDS)
+        self.assertIs(scheduled_pipeline, pipeline)
+        watchdog(scheduled_pipeline)
+
+        self.assertIs(self.controller.state, ApplicationState.FAILED)
+        self.assertIsNone(self.controller.lifecycle.pipeline)
+        self.assertEqual(callbacks, ["done"])
+        self.assertIn(
+            (
+                "error",
+                f"Stopped: Stop timed out after {STOP_TIMEOUT_SECONDS} seconds",
+                0,
+            ),
+            self.panel.events,
+        )
+
+        self.controller.pipeline_stopped(pipeline)
+        self.assertEqual(callbacks, ["done"])
+
+    def test_stop_preserves_errors_until_pipeline_stopped(self):
+        pipeline = FakePipeline()
+        self.controller.lifecycle.begin_start()
+        self.controller._pipeline_ready(
+            self.controller.start_generation,
+            pipeline,
+        )
+
+        self.controller.stop()
+        self.controller.stop_thread.join(timeout=1)
+        self.controller.pipeline_error(pipeline, "teardown failed")
+        self.controller.pipeline_stopped(pipeline)
+
+        self.assertIs(self.controller.state, ApplicationState.FAILED)
+        self.assertIn(
+            ("error", "Stopped: teardown failed", 0),
+            self.panel.events,
+        )
 
     def test_cancelled_start_does_not_attach_late_pipeline(self):
         self.controller.lifecycle.begin_start()

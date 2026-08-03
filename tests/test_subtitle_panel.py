@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from AppKit import (
     NSApplication,
+    NSMakeRect,
     NSNormalWindowLevel,
     NSWindowStyleMaskNonactivatingPanel,
     NSWindowStyleMaskResizable,
@@ -65,6 +66,182 @@ class SubtitlePanelTests(unittest.TestCase):
         )
         self.assertGreater(bottom, 0)
         self.assertAlmostEqual(clip.bounds().origin.y, bottom)
+
+    def test_manual_scroll_position_survives_live_updates(self):
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            for chunk_id in range(20):
+                self.panel.update_text(
+                    chunk_id,
+                    "source text " * 12,
+                    "translated text " * 8,
+                )
+
+        clip = self.panel.scroll_view.contentView()
+        clip.scrollToPoint_((0, 0))
+        self.panel.scroll_view.reflectScrolledClipView_(clip)
+
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            self.panel.update_live_text(
+                19,
+                "confirmed ",
+                "interim text " * 30,
+            )
+
+        self.assertEqual(clip.bounds().origin.y, 0)
+
+    def test_content_updates_coalesce_pending_layout(self):
+        callbacks = []
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callbacks.append(
+                (callback, args)
+            ),
+        ):
+            for index in range(100):
+                self.panel.update_live_text(
+                    1,
+                    "",
+                    f"interim {index}",
+                )
+
+            self.assertEqual(len(callbacks), 1)
+            callback, args = callbacks[0]
+            callback(*args)
+
+        self.assertFalse(self.panel.layout_pending)
+
+    def test_history_trim_preserves_visible_row_anchor(self):
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            for chunk_id in range(200):
+                self.panel.update_text(
+                    chunk_id,
+                    "source text " * 12,
+                    "translated text " * 8,
+                )
+
+        clip = self.panel.scroll_view.contentView()
+        target = self.panel.rows[100]
+        target_y = self.panel._row_rect_in_document(target).origin.y
+        clip.scrollToPoint_((0, target_y))
+        self.panel.scroll_view.reflectScrolledClipView_(clip)
+        before = (
+            self.panel._row_rect_in_document(target).origin.y
+            - clip.bounds().origin.y
+        )
+
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            self.panel.update_text(
+                200,
+                "source text " * 12,
+                "translated text " * 8,
+            )
+
+        after = (
+            self.panel._row_rect_in_document(target).origin.y
+            - clip.bounds().origin.y
+        )
+        self.assertEqual(self.panel.ordered_ids[0], 1)
+        self.assertAlmostEqual(after, before)
+
+    def test_viewport_height_changes_respect_tail_following(self):
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            for chunk_id in range(20):
+                self.panel.update_text(
+                    chunk_id,
+                    "source text " * 12,
+                    "translated text " * 8,
+                )
+
+        clip = self.panel.scroll_view.contentView()
+        frame = self.panel.window.frame()
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            self.panel.window.setFrame_display_(
+                NSMakeRect(
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    180,
+                ),
+                False,
+            )
+            self.panel._viewport_frame_changed(None)
+
+        bottom = max(
+            0,
+            self.panel.document_view.frame().size.height
+            - clip.bounds().size.height,
+        )
+        self.assertAlmostEqual(clip.bounds().origin.y, bottom)
+
+        clip.scrollToPoint_((0, 0))
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            self.panel.window.setFrame_display_(frame, False)
+            self.panel._viewport_frame_changed(None)
+
+        self.assertEqual(clip.bounds().origin.y, 0)
+
+    def test_long_subtitles_wrap_without_expanding_panel_content(self):
+        initial_width = self.panel.window.frame().size.width
+        with patch(
+            "ui_macos.subtitle_panel.AppHelper.callAfter",
+            side_effect=lambda callback, *args: callback(*args),
+        ):
+            self.panel.update_text(
+                1,
+                "This is a long subtitle without manual line breaks. " * 40,
+                "这是一段没有手动换行的长字幕。" * 80,
+            )
+
+        self.panel.window.contentView().layoutSubtreeIfNeeded()
+        row = self.panel.rows[1]
+        clip_width = self.panel.scroll_view.contentView().bounds().size.width
+
+        self.assertAlmostEqual(
+            self.panel.window.frame().size.width,
+            initial_width,
+        )
+        self.assertLessEqual(
+            self.panel.content_view.frame().size.width,
+            initial_width,
+        )
+        self.assertLessEqual(clip_width, initial_width)
+        self.assertLessEqual(
+            row.source_label.frame().size.width,
+            clip_width,
+        )
+        self.assertLessEqual(
+            row.translation_label.frame().size.width,
+            clip_width,
+        )
+        self.assertGreater(
+            row.source_label.frame().size.height,
+            self.panel.original_font_size * 2,
+        )
+        self.assertGreater(
+            row.translation_label.frame().size.height,
+            self.panel.translated_font_size * 2,
+        )
 
     def test_window_is_movable_and_resizable(self):
         self.assertTrue(self.panel.window.isMovable())

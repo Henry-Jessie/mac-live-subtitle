@@ -44,11 +44,6 @@ class ApplicationControllerTests(unittest.TestCase):
         self.assertIs(controller.state, ApplicationState.RUNNING)
         self.assertEqual(pipeline.resumed, 1)
 
-        controller.stop()
-        self.assertIs(controller.state, ApplicationState.IDLE)
-        self.assertIsNone(controller.pipeline)
-        self.assertEqual(pipeline.stopped, 1)
-
     def test_hard_pause_requires_a_new_pipeline(self):
         controller = ApplicationController()
         pipeline = FakePipeline(supports_soft_pause=False)
