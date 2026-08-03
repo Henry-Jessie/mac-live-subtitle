@@ -93,6 +93,11 @@ PROVIDER_TITLE_KEYS = {
     "Custom": "provider.custom",
 }
 THINKING_OPTIONS = ("false", "true", "auto")
+THINKING_DEFAULTS = {
+    "deepseek": "false",
+    "google": "auto",
+    "custom": "auto",
+}
 THINKING_TITLE_KEYS = {
     "false": "thinking.false",
     "true": "thinking.true",
@@ -104,10 +109,30 @@ FUNASR_API_KEY_GUIDES = {
         "https://www.alibabacloud.com/help/en/model-studio/get-api-key"
     ),
 }
+FUNASR_ENDPOINTS = {
+    "china": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+    "international": (
+        "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference"
+    ),
+}
+FUNASR_REGION_ORDER = tuple(FUNASR_ENDPOINTS)
+FUNASR_REGION_TITLE_KEYS = {
+    "china": "transcription.region_china",
+    "international": "transcription.region_international",
+}
+AUDIO_CAPTURE_BACKENDS = ("native", "blackhole")
+AUDIO_CAPTURE_TITLE_KEYS = {
+    "native": "audio.native",
+    "blackhole": "audio.blackhole",
+}
 SAVED_KEY_PLACEHOLDER = "••••••••••••"
-CONTROL_WIDTH = 360
+CONTROL_FONT_SIZE = 13
 FORM_LABEL_WIDTH = 150
 PANE_CONTENT_WIDTH = 560
+FORM_COLUMN_SPACING = 16
+CONTROL_WIDTH = (
+    PANE_CONTENT_WIDTH - FORM_LABEL_WIDTH - FORM_COLUMN_SPACING
+)
 TAB_TOP_INSET = 8
 TAB_FOOTER_GAP = 10
 FOOTER_HEIGHT = 52
@@ -137,7 +162,7 @@ SETTINGS_PANES = {
 
 def _label(text: str):
     label = NSTextField.labelWithString_(text)
-    label.setFont_(NSFont.systemFontOfSize_(13))
+    label.setFont_(NSFont.systemFontOfSize_(CONTROL_FONT_SIZE))
     label.setTextColor_(NSColor.labelColor())
     return label
 
@@ -187,6 +212,7 @@ def _text_field(placeholder: str = "", *, width: int = CONTROL_WIDTH):
         NSMakeRect(0, 0, width, 24)
     )
     field.setBezelStyle_(NSTextFieldRoundedBezel)
+    field.setFont_(NSFont.systemFontOfSize_(CONTROL_FONT_SIZE))
     field.setPlaceholderString_(placeholder)
     field.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
     return field
@@ -197,12 +223,14 @@ def _secure_field(*, width: int = CONTROL_WIDTH):
         NSMakeRect(0, 0, width, 24)
     )
     field.setBezelStyle_(NSTextFieldRoundedBezel)
+    field.setFont_(NSFont.systemFontOfSize_(CONTROL_FONT_SIZE))
     return field
 
 
 def _credential_control(target, action, *, width: int = CONTROL_WIDTH):
-    secure = _secure_field(width=width)
-    revealed = _text_field(width=width)
+    field_width = width - 30
+    secure = _secure_field(width=field_width)
+    revealed = _text_field(width=field_width)
     secure.setDelegate_(target)
     revealed.setDelegate_(target)
     revealed.setHidden_(True)
@@ -283,6 +311,7 @@ def _popup(titles, *, width: int = CONTROL_WIDTH):
         False,
     )
     popup.addItemsWithTitles_(titles)
+    popup.setFont_(NSFont.systemFontOfSize_(CONTROL_FONT_SIZE))
     popup.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
     return popup
 
@@ -321,6 +350,7 @@ def _disclosure_button(
         "toggleAdvanced:",
     )
     button.setBordered_(False)
+    button.setFont_(NSFont.systemFontOfSize_(CONTROL_FONT_SIZE))
     button.setImage_(_disclosure_image(False, description))
     button.setImagePosition_(NSImageLeading)
     button.setIdentifier_(identifier)
@@ -341,6 +371,7 @@ class SettingsWindow(NSObject):
         self.translation_key_originals = {}
         self.translation_key_exists = {}
         self.translation_key_dirty = {}
+        self.translation_thinking_drafts = {}
         self.asr_key_original = None
         self.asr_key_exists = False
         self.asr_key_dirty = False
@@ -559,6 +590,20 @@ class SettingsWindow(NSObject):
         ]
 
     @objc.python_method
+    def _funasr_region_titles(self):
+        return [
+            self._t(FUNASR_REGION_TITLE_KEYS[region])
+            for region in FUNASR_REGION_ORDER
+        ]
+
+    @objc.python_method
+    def _audio_capture_titles(self):
+        return [
+            self._t(AUDIO_CAPTURE_TITLE_KEYS[backend])
+            for backend in AUDIO_CAPTURE_BACKENDS
+        ]
+
+    @objc.python_method
     def _replace_popup_titles(self, popup, titles) -> None:
         selected_index = popup.indexOfSelectedItem()
         popup.removeAllItems()
@@ -583,6 +628,14 @@ class SettingsWindow(NSObject):
         self._replace_popup_titles(
             self.translation_thinking,
             self._thinking_popup_titles(),
+        )
+        self._replace_popup_titles(
+            self.asr_region,
+            self._funasr_region_titles(),
+        )
+        self._replace_popup_titles(
+            self.audio_capture_backend,
+            self._audio_capture_titles(),
         )
         self.interface_language_popup.selectItemAtIndex_(
             INTERFACE_LANGUAGES.index(self.interface_language)
@@ -775,8 +828,20 @@ class SettingsWindow(NSObject):
     @objc.python_method
     def _build_transcription_tab(self) -> None:
         self.asr_model = _text_field("fun-asr-realtime")
-        self.asr_url = _text_field(
-            "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+        self.audio_capture_backend = _popup(
+            self._audio_capture_titles()
+        )
+        self._bind_tooltip(
+            self.audio_capture_backend,
+            "transcription.audio_capture_help",
+        )
+        self.asr_region = _popup(
+            self._funasr_region_titles(),
+            width=PANE_CONTENT_WIDTH,
+        )
+        self._bind_tooltip(
+            self.asr_region,
+            "transcription.region_help",
         )
         (
             self.asr_key_control,
@@ -817,18 +882,9 @@ class SettingsWindow(NSObject):
             self.multi_threshold,
             "transcription.multi_threshold_help",
         )
-        self.interim_chars = _text_field("40")
-        self._bind_tooltip(
-            self.interim_chars,
-            "transcription.interim_interval_help",
-        )
         self._bind_tooltip(
             self.asr_model,
             "transcription.model_help",
-        )
-        self._bind_tooltip(
-            self.asr_url,
-            "transcription.websocket_url_help",
         )
         self.asr_test_button = NSButton.buttonWithTitle_target_action_(
             self._t("common.test_connection"),
@@ -940,6 +996,11 @@ class SettingsWindow(NSObject):
             "common.api_access",
             [
                 self._localized_field_group(
+                    "transcription.region",
+                    self.asr_region,
+                    "transcription.region_help",
+                ),
+                self._localized_field_group(
                     "common.api_key",
                     self.asr_key_control,
                     "transcription.api_key_help",
@@ -970,8 +1031,11 @@ class SettingsWindow(NSObject):
                 language_and_sentences,
             ],
             advanced_rows=[
+                (
+                    "transcription.audio_capture",
+                    self.audio_capture_backend,
+                ),
                 ("transcription.model", self.asr_model),
-                ("transcription.websocket_url", self.asr_url),
                 (
                     "transcription.maximum_silence",
                     self.max_silence,
@@ -979,10 +1043,6 @@ class SettingsWindow(NSObject):
                 (
                     "transcription.multi_threshold",
                     self.multi_threshold,
-                ),
-                (
-                    "transcription.interim_interval",
-                    self.interim_chars,
                 ),
             ],
         )
@@ -1321,7 +1381,7 @@ class SettingsWindow(NSObject):
                 ]
             )
             grid.setRowSpacing_(9)
-            grid.setColumnSpacing_(16)
+            grid.setColumnSpacing_(FORM_COLUMN_SPACING)
             grid.columnAtIndex_(0).setWidth_(FORM_LABEL_WIDTH)
             grid.columnAtIndex_(1).setWidth_(CONTROL_WIDTH)
 
@@ -1362,7 +1422,7 @@ class SettingsWindow(NSObject):
                 ]
             )
             advanced_view.setRowSpacing_(9)
-            advanced_view.setColumnSpacing_(16)
+            advanced_view.setColumnSpacing_(FORM_COLUMN_SPACING)
             advanced_view.columnAtIndex_(0).setWidth_(FORM_LABEL_WIDTH)
             advanced_view.columnAtIndex_(1).setWidth_(CONTROL_WIDTH)
             content_views.extend([separator, disclosure, advanced_view])
@@ -1469,6 +1529,9 @@ class SettingsWindow(NSObject):
 
     @objc.python_method
     def show(self) -> None:
+        if self.window.isVisible():
+            self.window.makeKeyAndOrderFront_(None)
+            return
         self._load()
         self._select_pane(
             self.current_pane_identifier,
@@ -1487,11 +1550,22 @@ class SettingsWindow(NSObject):
     def _load(self) -> None:
         self.loading = True
         preferences = self.store.load()
+        self.audio_capture_backend.selectItemAtIndex_(
+            AUDIO_CAPTURE_BACKENDS.index(
+                preferences.audio_capture_backend
+            )
+        )
         self.asr_model.setStringValue_(
             preferences.funasr_realtime_model
         )
-        self.asr_url.setStringValue_(
-            preferences.funasr_realtime_ws_url
+        region = (
+            "international"
+            if preferences.funasr_realtime_ws_url
+            == FUNASR_ENDPOINTS["international"]
+            else "china"
+        )
+        self.asr_region.selectItemAtIndex_(
+            FUNASR_REGION_ORDER.index(region)
         )
         self.source_language.setStringValue_(preferences.source_language)
         self.semantic_punctuation.setState_(
@@ -1506,9 +1580,6 @@ class SettingsWindow(NSObject):
             NSControlStateValueOn
             if preferences.funasr_realtime_multi_threshold
             else 0
-        )
-        self.interim_chars.setIntegerValue_(
-            preferences.funasr_interim_translate_chars
         )
         self.asr_key_exists = self.store.has_asr_key()
         self.asr_key_original = None
@@ -1542,9 +1613,13 @@ class SettingsWindow(NSObject):
             preferences.api_base_url
         )
         self.translation_model.setStringValue_(preferences.model)
+        self.translation_thinking_drafts = {
+            self.active_translation_provider: preferences.translation_thinking
+        }
         self.translation_thinking.selectItemAtIndex_(
             THINKING_OPTIONS.index(preferences.translation_thinking)
         )
+        self.translation_thinking.setEnabled_(True)
         self.target_language.setStringValue_(preferences.target_lang)
         self.temperature.setDoubleValue_(
             preferences.translation_temperature
@@ -1603,11 +1678,23 @@ class SettingsWindow(NSObject):
         if self.loading:
             return
         self._stash_translation_key()
+        self.translation_thinking_drafts[
+            self.active_translation_provider
+        ] = THINKING_OPTIONS[
+            self.translation_thinking.indexOfSelectedItem()
+        ]
 
         title = self._selected_provider_title()
         preset = TRANSLATION_PROVIDERS[title]
         provider = preset["id"]
         self.active_translation_provider = provider
+        thinking = self.translation_thinking_drafts.setdefault(
+            provider,
+            THINKING_DEFAULTS[provider],
+        )
+        self.translation_thinking.selectItemAtIndex_(
+            THINKING_OPTIONS.index(thinking)
+        )
         if title != "Custom":
             self.translation_base_url.setStringValue_(preset["base_url"])
             self.translation_model.setStringValue_(preset["model"])
@@ -1674,13 +1761,13 @@ class SettingsWindow(NSObject):
         if dirty and not value and exists:
             return self._t("common.remove_key_on_save")
         if original is not None and value == original:
-            return self._t("common.saved_locally")
+            return ""
         if value:
             if exists:
                 return self._t("common.replace_saved_key")
             return self._t("common.save_new_key")
         if exists:
-            return self._t("common.saved_locally")
+            return ""
         return ""
 
     @objc.python_method
@@ -1998,21 +2085,18 @@ class SettingsWindow(NSObject):
     @objc.python_method
     def _preferences_from_fields(self):
         model = self.asr_model.stringValue().strip()
-        url = self.asr_url.stringValue().strip()
+        url = FUNASR_ENDPOINTS[
+            FUNASR_REGION_ORDER[self.asr_region.indexOfSelectedItem()]
+        ]
         source_language = self.source_language.stringValue().strip() or "auto"
         max_silence = self.max_silence.integerValue()
-        interim_chars = self.interim_chars.integerValue()
         translation_model = self.translation_model.stringValue().strip()
         target_language = self.target_language.stringValue().strip()
         temperature = self.temperature.doubleValue()
         if not model:
             raise ValueError(self._t("validation.funasr_model"))
-        if not url.startswith(("wss://", "ws://")):
-            raise ValueError(self._t("validation.websocket_url"))
         if max_silence != 0 and not 200 <= max_silence <= 6000:
             raise ValueError(self._t("validation.maximum_silence"))
-        if interim_chars < 0:
-            raise ValueError(self._t("validation.interim_interval"))
         if not translation_model:
             raise ValueError(self._t("validation.translation_model"))
         if not target_language:
@@ -2034,6 +2118,9 @@ class SettingsWindow(NSObject):
                 raise ValueError(self._t("validation.extra_body"))
         return replace(
             current,
+            audio_capture_backend=AUDIO_CAPTURE_BACKENDS[
+                self.audio_capture_backend.indexOfSelectedItem()
+            ],
             funasr_realtime_model=model,
             funasr_realtime_ws_url=url,
             source_language=source_language,
@@ -2045,7 +2132,6 @@ class SettingsWindow(NSObject):
             funasr_realtime_multi_threshold=(
                 self.multi_threshold.state() == NSControlStateValueOn
             ),
-            funasr_interim_translate_chars=interim_chars,
             translation_enabled=(
                 self.translation_enabled.state()
                 == NSControlStateValueOn
@@ -2070,7 +2156,9 @@ class SettingsWindow(NSObject):
         )
 
     def testASR_(self, _sender) -> None:
-        url = self.asr_url.stringValue().strip()
+        url = FUNASR_ENDPOINTS[
+            FUNASR_REGION_ORDER[self.asr_region.indexOfSelectedItem()]
+        ]
         try:
             api_key = self._current_credential_value(
                 self.asr_key,
@@ -2152,6 +2240,11 @@ class SettingsWindow(NSObject):
                 if preferences.translation_extra_body_json
                 else None
             )
+            thinking = {
+                "true": True,
+                "false": False,
+                "auto": None,
+            }[preferences.translation_thinking]
         except Exception as exc:
             self._set_test_result(
                 self.translation_test_result,
@@ -2175,6 +2268,7 @@ class SettingsWindow(NSObject):
                     model=preferences.model,
                     target_lang=preferences.target_lang,
                     extra_body=extra_body,
+                    thinking=thinking,
                 )
                 AppHelper.callAfter(
                     self._finish_translation_test,

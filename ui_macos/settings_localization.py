@@ -25,7 +25,6 @@ SETTINGS_STRINGS = {
         "common.testing": "Testing…",
         "common.show_api_key": "Show API key",
         "common.hide_api_key": "Hide API key",
-        "common.saved_locally": "Saved locally",
         "common.remove_key_on_save": (
             "Key will be removed when you save"
         ),
@@ -52,8 +51,16 @@ SETTINGS_STRINGS = {
             "regions."
         ),
         "transcription.api_key_help": (
-            "Stored only on this Mac. Use an API key and WebSocket endpoint "
-            "from the same region."
+            "Stored only on this Mac. Use an API key from the selected "
+            "service region."
+        ),
+        "transcription.region": "Service region",
+        "transcription.region_help": (
+            "Choose the region where your API key was created."
+        ),
+        "transcription.region_china": "China (Beijing)",
+        "transcription.region_international": (
+            "International (Singapore)"
         ),
         "transcription.language_section": "Language & Sentences",
         "transcription.source_language": "Source language",
@@ -67,12 +74,16 @@ SETTINGS_STRINGS = {
         "transcription.semantic_punctuation_help": (
             "Let FunASR use punctuation to decide when a sentence ends."
         ),
+        "transcription.audio_capture": "Audio capture",
+        "transcription.audio_capture_help": (
+            "Native needs no setup. Use BlackHole Compatibility after "
+            "configuring a Multi-Output Device for protected players such "
+            "as Apple TV."
+        ),
+        "audio.native": "Native System Audio",
+        "audio.blackhole": "BlackHole Compatibility",
         "transcription.model": "Model",
         "transcription.model_help": "FunASR model identifier.",
-        "transcription.websocket_url": "WebSocket URL",
-        "transcription.websocket_url_help": (
-            "WebSocket endpoint used by FunASR Realtime."
-        ),
         "transcription.maximum_silence": "Maximum silence (ms)",
         "transcription.maximum_silence_help": (
             "Use 0 for the provider default, or 200–6000 ms in VAD mode."
@@ -80,11 +91,6 @@ SETTINGS_STRINGS = {
         "transcription.multi_threshold": "Multi-threshold VAD",
         "transcription.multi_threshold_help": (
             "Helps VAD mode avoid overly long sentences."
-        ),
-        "transcription.interim_interval": "Interim interval",
-        "transcription.interim_interval_help": (
-            "Translate a growing sentence at this display-length interval; "
-            "use 0 to disable."
         ),
         "translation.title": "Translation",
         "translation.introduction": (
@@ -107,7 +113,8 @@ SETTINGS_STRINGS = {
         ),
         "translation.thinking": "Thinking",
         "translation.thinking_help": (
-            "Control whether the provider returns reasoning content."
+            "Choose Enabled, Disabled, or Default. Default omits the "
+            "thinking parameter."
         ),
         "translation.temperature": "Temperature",
         "translation.temperature_help": (
@@ -129,16 +136,10 @@ SETTINGS_STRINGS = {
         "provider.custom": "Custom",
         "thinking.false": "Disabled",
         "thinking.true": "Enabled",
-        "thinking.auto": "Auto (omit)",
+        "thinking.auto": "Default",
         "validation.funasr_model": "FunASR model is required",
-        "validation.websocket_url": (
-            "FunASR WebSocket URL must start with ws:// or wss://"
-        ),
         "validation.maximum_silence": (
             "Max silence must be 0 or between 200 and 6000 ms"
-        ),
-        "validation.interim_interval": (
-            "Interim translation threshold cannot be negative"
         ),
         "validation.translation_model": "Translation model is required",
         "validation.target_language": "Target language is required",
@@ -165,7 +166,6 @@ SETTINGS_STRINGS = {
         "common.testing": "正在测试…",
         "common.show_api_key": "显示 API Key",
         "common.hide_api_key": "隐藏 API Key",
-        "common.saved_locally": "已保存在本机",
         "common.remove_key_on_save": "保存后将删除此密钥",
         "common.replace_saved_key": "新密钥将替换已保存的密钥",
         "common.save_new_key": "新密钥将保存在本机",
@@ -184,9 +184,11 @@ SETTINGS_STRINGS = {
             "使用本服务需要阿里云百炼 API Key。请选择账号所在地域的"
             "申请教程，不同地域的 API Key 不能混用。"
         ),
-        "transcription.api_key_help": (
-            "仅保存在本机。API Key 与 WebSocket 地址需要属于同一地域。"
-        ),
+        "transcription.api_key_help": "仅保存在本机。请使用所选服务区域的 API Key。",
+        "transcription.region": "服务区域",
+        "transcription.region_help": "请选择 API Key 所属的服务区域。",
+        "transcription.region_china": "中国（北京）",
+        "transcription.region_international": "国际（新加坡）",
         "transcription.language_section": "语言与分句",
         "transcription.source_language": "源语言",
         "transcription.source_language_help": (
@@ -196,12 +198,15 @@ SETTINGS_STRINGS = {
         "transcription.semantic_punctuation_help": (
             "让 FunASR 根据标点判断句子结束位置。"
         ),
+        "transcription.audio_capture": "音频捕获",
+        "transcription.audio_capture_help": (
+            "原生模式无需设置。Apple TV 等受保护播放器可在配置多输出设备后"
+            "使用 BlackHole 兼容模式。"
+        ),
+        "audio.native": "原生系统音频",
+        "audio.blackhole": "BlackHole 兼容模式",
         "transcription.model": "模型",
         "transcription.model_help": "FunASR 模型标识。",
-        "transcription.websocket_url": "WebSocket 地址",
-        "transcription.websocket_url_help": (
-            "FunASR 实时识别使用的 WebSocket 服务地址。"
-        ),
         "transcription.maximum_silence": "最长静音（毫秒）",
         "transcription.maximum_silence_help": (
             "填写 0 使用服务默认值；VAD 模式可填写 200–6000。"
@@ -209,10 +214,6 @@ SETTINGS_STRINGS = {
         "transcription.multi_threshold": "多阈值 VAD",
         "transcription.multi_threshold_help": (
             "帮助 VAD 模式避免生成过长的句子。"
-        ),
-        "transcription.interim_interval": "中间结果间隔",
-        "transcription.interim_interval_help": (
-            "句子增长到指定显示长度时触发翻译；填写 0 可关闭。"
         ),
         "translation.title": "翻译",
         "translation.introduction": "选择字幕翻译服务。",
@@ -228,7 +229,9 @@ SETTINGS_STRINGS = {
         "translation.model": "模型",
         "translation.model_help": "当前服务商使用的模型标识。",
         "translation.thinking": "思考模式",
-        "translation.thinking_help": "控制服务商是否返回推理内容。",
+        "translation.thinking_help": (
+            "可选择开启、关闭或默认；“默认”不会发送 thinking 参数。"
+        ),
         "translation.temperature": "温度",
         "translation.temperature_help": "采样温度，取值范围为 0 到 2。",
         "display.window": "窗口",
@@ -245,15 +248,11 @@ SETTINGS_STRINGS = {
         "provider.custom": "自定义",
         "thinking.false": "关闭",
         "thinking.true": "开启",
-        "thinking.auto": "自动（省略参数）",
+        "thinking.auto": "默认",
         "validation.funasr_model": "请填写 FunASR 模型",
-        "validation.websocket_url": (
-            "FunASR WebSocket 地址必须以 ws:// 或 wss:// 开头"
-        ),
         "validation.maximum_silence": (
             "最长静音必须为 0，或介于 200 到 6000 毫秒"
         ),
-        "validation.interim_interval": "中间结果翻译间隔不能为负数",
         "validation.translation_model": "请填写翻译模型",
         "validation.target_language": "请填写目标语言",
         "validation.temperature": "温度必须介于 0 到 2",

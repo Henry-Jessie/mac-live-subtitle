@@ -6,9 +6,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "httpx",
-    "json-repair",
     "numpy",
     "openai>=1.52.0",
+    "sounddevice",
     "pyobjc-framework-Cocoa>=12.2.1; sys_platform == 'darwin'",
     "pyobjc-framework-CoreAudio>=12.2.1; sys_platform == 'darwin'",
     "pyobjc-framework-CoreMedia>=12.2.1; sys_platform == 'darwin'",

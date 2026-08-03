@@ -46,6 +46,18 @@ rm -f "$archive_path" "$checksum_path"
 uv sync --group build --frozen
 uv run python setup.py py2app
 
+portaudio_path=$(
+    find "$app_path/Contents/Resources/lib" \
+        -path '*/_sounddevice_data/portaudio-binaries/libportaudio.dylib' \
+        -type f \
+        -print \
+        -quit
+)
+if [[ -z "$portaudio_path" ]]; then
+    print -u2 "Bundled PortAudio library not found"
+    exit 1
+fi
+
 codesign \
     --force \
     --deep \

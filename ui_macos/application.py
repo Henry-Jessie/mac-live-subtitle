@@ -6,6 +6,8 @@ from AppKit import (
     NSApp,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
+    NSMenu,
+    NSMenuItem,
 )
 from Foundation import NSLog, NSObject
 from PyObjCTools import AppHelper
@@ -72,11 +74,6 @@ class ApplicationDelegate(NSObject):
             pin_changed=self.subtitle_pin_changed,
         )
         self.controller.state_changed = self.application_state_changed
-        self.subtitle_panel.visibility_changed = (
-            lambda _visible: self.status_popover.refresh(
-                self.controller.state
-            )
-        )
         self.started = True
         self.subtitle_panel.show()
         NSLog("Mac Live Subtitle initialized")
@@ -142,12 +139,40 @@ class ApplicationDelegate(NSObject):
 _delegate = None
 
 
+def _build_main_menu():
+    main_menu = NSMenu.alloc().initWithTitle_("")
+    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+        "Edit",
+        None,
+        "",
+    )
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    edit_item.setSubmenu_(edit_menu)
+    main_menu.addItem_(edit_item)
+
+    for title, action, key in (
+        ("Cut", "cut:", "x"),
+        ("Copy", "copy:", "c"),
+        ("Paste", "paste:", "v"),
+        ("Select All", "selectAll:", "a"),
+    ):
+        edit_menu.addItem_(
+            NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                title,
+                action,
+                key,
+            )
+        )
+    return main_menu
+
+
 def main() -> None:
     global _delegate
     application = NSApplication.sharedApplication()
     application.setActivationPolicy_(
         NSApplicationActivationPolicyAccessory
     )
+    application.setMainMenu_(_build_main_menu())
     _delegate = ApplicationDelegate.alloc().init().configure()
     application.setDelegate_(_delegate)
     signal.signal(

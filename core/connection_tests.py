@@ -24,6 +24,7 @@ def test_translation_connection(
     model: str,
     target_lang: str,
     extra_body: dict | None,
+    thinking: bool | None,
 ) -> str:
     http_client = httpx.Client(
         timeout=10,
@@ -35,6 +36,11 @@ def test_translation_connection(
             base_url=base_url,
             http_client=http_client,
         )
+        request_extra_body = dict(extra_body) if extra_body else {}
+        if thinking is not None:
+            request_extra_body["thinking"] = {
+                "type": "enabled" if thinking else "disabled"
+            }
         create_kwargs = {
             "model": model,
             "messages": [
@@ -51,11 +57,11 @@ def test_translation_connection(
                 },
             ],
             "temperature": 0,
-            "max_tokens": 80,
+            "max_tokens": 500,
             "timeout": 10.0,
         }
-        if extra_body:
-            create_kwargs["extra_body"] = extra_body
+        if request_extra_body:
+            create_kwargs["extra_body"] = request_extra_body
         response = client.chat.completions.create(**create_kwargs)
         text = (response.choices[0].message.content or "").strip()
         text = re.sub(

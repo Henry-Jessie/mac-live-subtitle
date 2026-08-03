@@ -1,10 +1,9 @@
 import unittest
-from pathlib import Path
 
 from AppKit import NSApplication
 
 from tests.test_settings_store import FakeCredentials, FakeDefaults
-from ui_macos.application import ApplicationDelegate
+from ui_macos.application import ApplicationDelegate, _build_main_menu
 from ui_macos.settings_store import SettingsStore
 
 
@@ -16,7 +15,6 @@ class ApplicationDelegateTests(unittest.TestCase):
     def setUp(self):
         store = SettingsStore(
             defaults=FakeDefaults(),
-            config_path=Path("/nonexistent/mac-live-subtitle-config.ini"),
             credentials=FakeCredentials(),
         )
         self.delegate = ApplicationDelegate.alloc().init().configure(
@@ -71,6 +69,27 @@ class ApplicationDelegateTests(unittest.TestCase):
         self.assertEqual(
             self.delegate.settings_window.always_on_top.state(),
             0,
+        )
+
+    def test_main_menu_routes_standard_edit_shortcuts(self):
+        menu = _build_main_menu()
+        edit_menu = menu.itemAtIndex_(0).submenu()
+        shortcuts = {
+            item.action(): item.keyEquivalent()
+            for item in edit_menu.itemArray()
+        }
+
+        self.assertEqual(
+            shortcuts,
+            {
+                "cut:": "x",
+                "copy:": "c",
+                "paste:": "v",
+                "selectAll:": "a",
+            },
+        )
+        self.assertTrue(
+            all(item.target() is None for item in edit_menu.itemArray())
         )
 
 

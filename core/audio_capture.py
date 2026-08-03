@@ -8,6 +8,8 @@ import objc
 import ScreenCaptureKit
 from Foundation import NSObject
 
+from core.blackhole_audio_capture import BlackHoleAudioCapture
+
 
 _STOP = object()
 
@@ -304,3 +306,14 @@ class AudioCapture:
             self._stop_capture()
             self._frames = None
             print("[ScreenCaptureKit] Generator stopped.")
+
+
+def create_audio_capture(backend: str, *, sample_rate: int, step_size: float):
+    normalized = backend.strip().lower()
+    if normalized == "native":
+        capture_class = AudioCapture
+    elif normalized == "blackhole":
+        capture_class = BlackHoleAudioCapture
+    else:
+        raise ValueError(f"Unsupported audio capture backend: {backend!r}")
+    return capture_class(sample_rate=sample_rate, step_size=step_size)

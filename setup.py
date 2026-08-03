@@ -44,15 +44,13 @@ OPTIONS = {
         "tiktoken_ext.openai_public",
         *MYPYC_MODULES,
     ],
+    "packages": ["_sounddevice_data"],
     "frameworks": [
         str(PYTHON_LIBRARY_DIR / name)
         for name in PYTHON_LIBRARY_NAMES
         if (PYTHON_LIBRARY_DIR / name).exists()
     ],
-    "resources": [
-        "assets",
-        "config.ini.example",
-    ],
+    "resources": ["assets"],
     "plist": {
         "CFBundleName": "Mac Live Subtitle",
         "CFBundleDisplayName": "Mac Live Subtitle",
@@ -65,6 +63,10 @@ OPTIONS = {
         "NSHighResolutionCapable": True,
         "NSScreenCaptureUsageDescription": (
             "Mac Live Subtitle captures system audio to generate live subtitles."
+        ),
+        "NSMicrophoneUsageDescription": (
+            "Mac Live Subtitle captures audio from a BlackHole virtual device "
+            "to generate live subtitles."
         ),
     },
 }

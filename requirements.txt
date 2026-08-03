@@ -1,8 +1,8 @@
 numpy
 openai>=1.52.0
+sounddevice
 httpx
 tiktoken
-json-repair
 websocket-client
 pyobjc-framework-CoreAudio; sys_platform == 'darwin'
 pyobjc-framework-CoreMedia; sys_platform == 'darwin'

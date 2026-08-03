@@ -1,14 +1,14 @@
 import unittest
 from dataclasses import FrozenInstanceError
-from types import SimpleNamespace
 
 from core.settings import PipelineSettings
 
 
 class PipelineSettingsTests(unittest.TestCase):
-    def test_snapshot_is_frozen_and_copies_nested_settings(self):
-        source = SimpleNamespace(
+    def test_snapshot_is_frozen_and_hides_secrets(self):
+        snapshot = PipelineSettings(
             asr_backend="funasr_realtime",
+            audio_capture_backend="native",
             sample_rate=16000,
             streaming_step_size=0.2,
             translation_enabled=True,
@@ -24,16 +24,11 @@ class PipelineSettingsTests(unittest.TestCase):
             funasr_realtime_ws_url="wss://example.test/asr",
             funasr_realtime_api_key="asr-secret",
             funasr_realtime_event_log="",
-            funasr_interim_translate_chars=40,
             funasr_realtime_semantic_punctuation=True,
             funasr_realtime_max_sentence_silence=0,
             funasr_realtime_multi_threshold=False,
             source_language=None,
         )
-
-        snapshot = PipelineSettings.from_config(source)
-        source.model = "edited-model"
-        source.translation_extra_body["thinking"]["type"] = "enabled"
 
         self.assertEqual(snapshot.model, "test-model")
         self.assertEqual(

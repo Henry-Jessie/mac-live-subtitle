@@ -1,22 +1,17 @@
-import configparser
 import json
 from dataclasses import dataclass
-from pathlib import Path
 
 from Foundation import NSBundle, NSUserDefaults
 
 from core.credentials import (
     ASR_DASHSCOPE_ACCOUNT,
     credential_store,
-    infer_translation_provider,
     translation_account,
 )
-from core.paths import default_config_path
 from core.settings import PipelineSettings
 
 
 BUNDLE_ID = "com.henryjessie.MacLiveSubtitle"
-INITIALIZED_KEY = "settings.initialized"
 INTERFACE_LANGUAGE_KEY = "interface.language"
 
 
@@ -29,13 +24,13 @@ def _default_user_defaults():
 @dataclass(frozen=True, slots=True)
 class Preferences:
     asr_backend: str
+    audio_capture_backend: str
     source_language: str
     funasr_realtime_model: str
     funasr_realtime_ws_url: str
     funasr_realtime_semantic_punctuation: bool
     funasr_realtime_max_sentence_silence: int
     funasr_realtime_multi_threshold: bool
-    funasr_interim_translate_chars: int
     funasr_realtime_event_log: str
     sample_rate: int
     streaming_step_size: float
@@ -56,6 +51,7 @@ class Preferences:
 
 DEFAULTS = {
     "transcription.backend": "funasr_realtime",
+    "audio.capture_backend": "native",
     "transcription.source_language": "auto",
     "transcription.funasr_realtime_model": "fun-asr-realtime",
     "transcription.funasr_realtime_ws_url": (
@@ -64,7 +60,6 @@ DEFAULTS = {
     "transcription.funasr_realtime_semantic_punctuation": True,
     "transcription.funasr_realtime_max_sentence_silence": 0,
     "transcription.funasr_realtime_multi_threshold": False,
-    "transcription.funasr_interim_translate_chars": 40,
     "transcription.funasr_realtime_event_log": "",
     "audio.sample_rate": 16000,
     "audio.streaming_step_size": 0.2,
@@ -90,7 +85,6 @@ class SettingsStore:
         self,
         *,
         defaults=None,
-        config_path: Path | None = None,
         credentials=credential_store,
     ):
         self.defaults = (
@@ -98,16 +92,13 @@ class SettingsStore:
             if defaults is not None
             else _default_user_defaults()
         )
-        self.config_path = config_path or default_config_path()
         self.credentials = credentials
         self.defaults.registerDefaults_(DEFAULTS)
-        if not self.defaults.boolForKey_(INITIALIZED_KEY):
-            self._import_config_ini()
-            self.defaults.setBool_forKey_(True, INITIALIZED_KEY)
 
     def load(self) -> Preferences:
         return Preferences(
             asr_backend=self._string("transcription.backend"),
+            audio_capture_backend=self._string("audio.capture_backend"),
             source_language=self._string("transcription.source_language"),
             funasr_realtime_model=self._string(
                 "transcription.funasr_realtime_model"
@@ -123,9 +114,6 @@ class SettingsStore:
             ),
             funasr_realtime_multi_threshold=self.defaults.boolForKey_(
                 "transcription.funasr_realtime_multi_threshold"
-            ),
-            funasr_interim_translate_chars=self.defaults.integerForKey_(
-                "transcription.funasr_interim_translate_chars"
             ),
             funasr_realtime_event_log=self._string(
                 "transcription.funasr_realtime_event_log"
@@ -166,6 +154,7 @@ class SettingsStore:
     def save(self, preferences: Preferences) -> None:
         values = {
             "transcription.backend": preferences.asr_backend,
+            "audio.capture_backend": preferences.audio_capture_backend,
             "transcription.source_language": preferences.source_language,
             "transcription.funasr_realtime_model": (
                 preferences.funasr_realtime_model
@@ -181,9 +170,6 @@ class SettingsStore:
             ),
             "transcription.funasr_realtime_multi_threshold": (
                 preferences.funasr_realtime_multi_threshold
-            ),
-            "transcription.funasr_interim_translate_chars": (
-                preferences.funasr_interim_translate_chars
             ),
             "transcription.funasr_realtime_event_log": (
                 preferences.funasr_realtime_event_log
@@ -235,6 +221,7 @@ class SettingsStore:
         )
         return PipelineSettings(
             asr_backend=preferences.asr_backend,
+            audio_capture_backend=preferences.audio_capture_backend,
             sample_rate=preferences.sample_rate,
             streaming_step_size=preferences.streaming_step_size,
             translation_enabled=preferences.translation_enabled,
@@ -250,9 +237,6 @@ class SettingsStore:
             funasr_realtime_ws_url=preferences.funasr_realtime_ws_url,
             funasr_realtime_api_key=self.asr_key(),
             funasr_realtime_event_log=preferences.funasr_realtime_event_log,
-            funasr_interim_translate_chars=(
-                preferences.funasr_interim_translate_chars
-            ),
             funasr_realtime_semantic_punctuation=(
                 preferences.funasr_realtime_semantic_punctuation
             ),
@@ -292,145 +276,3 @@ class SettingsStore:
 
     def _string(self, key: str) -> str:
         return str(self.defaults.stringForKey_(key) or "")
-
-    def _import_config_ini(self) -> None:
-        if not self.config_path.exists():
-            return
-        parser = configparser.ConfigParser()
-        parser.read(self.config_path)
-
-        base_url = parser.get(
-            "translation",
-            "base_url",
-            fallback=DEFAULTS["translation.base_url"],
-        )
-        values = {
-            "transcription.backend": parser.get(
-                "transcription",
-                "backend",
-                fallback=DEFAULTS["transcription.backend"],
-            ),
-            "transcription.source_language": parser.get(
-                "transcription",
-                "source_language",
-                fallback=DEFAULTS["transcription.source_language"],
-            ),
-            "transcription.funasr_realtime_model": parser.get(
-                "transcription",
-                "funasr_realtime_model",
-                fallback=DEFAULTS["transcription.funasr_realtime_model"],
-            ),
-            "transcription.funasr_realtime_ws_url": parser.get(
-                "transcription",
-                "funasr_realtime_ws_url",
-                fallback=DEFAULTS["transcription.funasr_realtime_ws_url"],
-            ),
-            "transcription.funasr_realtime_semantic_punctuation": parser.getboolean(
-                "transcription",
-                "funasr_realtime_semantic_punctuation",
-                fallback=DEFAULTS[
-                    "transcription.funasr_realtime_semantic_punctuation"
-                ],
-            ),
-            "transcription.funasr_realtime_max_sentence_silence": parser.getint(
-                "transcription",
-                "funasr_realtime_max_sentence_silence",
-                fallback=DEFAULTS[
-                    "transcription.funasr_realtime_max_sentence_silence"
-                ],
-            ),
-            "transcription.funasr_realtime_multi_threshold": parser.getboolean(
-                "transcription",
-                "funasr_realtime_multi_threshold",
-                fallback=DEFAULTS[
-                    "transcription.funasr_realtime_multi_threshold"
-                ],
-            ),
-            "transcription.funasr_interim_translate_chars": parser.getint(
-                "transcription",
-                "funasr_interim_translate_chars",
-                fallback=DEFAULTS[
-                    "transcription.funasr_interim_translate_chars"
-                ],
-            ),
-            "transcription.funasr_realtime_event_log": parser.get(
-                "transcription",
-                "funasr_realtime_event_log",
-                fallback=DEFAULTS[
-                    "transcription.funasr_realtime_event_log"
-                ],
-            ),
-            "audio.sample_rate": parser.getint(
-                "audio",
-                "sample_rate",
-                fallback=DEFAULTS["audio.sample_rate"],
-            ),
-            "audio.streaming_step_size": parser.getfloat(
-                "audio",
-                "streaming_step_size",
-                fallback=DEFAULTS["audio.streaming_step_size"],
-            ),
-            "translation.enabled": parser.getboolean(
-                "translation",
-                "enabled",
-                fallback=DEFAULTS["translation.enabled"],
-            ),
-            "translation.provider": parser.get(
-                "translation",
-                "provider",
-                fallback=infer_translation_provider(base_url),
-            ),
-            "translation.base_url": base_url,
-            "translation.model": parser.get(
-                "translation",
-                "model",
-                fallback=DEFAULTS["translation.model"],
-            ),
-            "translation.thinking": parser.get(
-                "translation",
-                "thinking",
-                fallback=DEFAULTS["translation.thinking"],
-            ),
-            "translation.target_lang": parser.get(
-                "translation",
-                "target_lang",
-                fallback=DEFAULTS["translation.target_lang"],
-            ),
-            "translation.temperature": parser.getfloat(
-                "translation",
-                "temperature",
-                fallback=DEFAULTS["translation.temperature"],
-            ),
-            "translation.extra_body_json": parser.get(
-                "translation",
-                "extra_body",
-                fallback=DEFAULTS["translation.extra_body_json"],
-            ),
-            "translation.debug": parser.getboolean(
-                "translation",
-                "debug",
-                fallback=DEFAULTS["translation.debug"],
-            ),
-            "display.always_on_top": parser.getboolean(
-                "display",
-                "always_on_top",
-                fallback=DEFAULTS["display.always_on_top"],
-            ),
-            "display.background_opacity": parser.getfloat(
-                "display",
-                "background_opacity",
-                fallback=DEFAULTS["display.background_opacity"],
-            ),
-            "display.original_font_size": parser.getint(
-                "display",
-                "original_font_size",
-                fallback=DEFAULTS["display.original_font_size"],
-            ),
-            "display.translated_font_size": parser.getint(
-                "display",
-                "translated_font_size",
-                fallback=DEFAULTS["display.translated_font_size"],
-            ),
-        }
-        for key, value in values.items():
-            self.defaults.setObject_forKey_(value, key)

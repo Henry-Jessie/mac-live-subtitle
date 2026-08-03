@@ -8,6 +8,7 @@ from core.settings import PipelineSettings
 def make_settings(**overrides) -> PipelineSettings:
     values = {
         "asr_backend": "unsupported",
+        "audio_capture_backend": "native",
         "sample_rate": 16000,
         "streaming_step_size": 0.2,
         "translation_enabled": False,
@@ -23,7 +24,6 @@ def make_settings(**overrides) -> PipelineSettings:
         "funasr_realtime_ws_url": "wss://example.test/asr",
         "funasr_realtime_api_key": None,
         "funasr_realtime_event_log": "",
-        "funasr_interim_translate_chars": 40,
         "funasr_realtime_semantic_punctuation": True,
         "funasr_realtime_max_sentence_silence": 0,
         "funasr_realtime_multi_threshold": False,
@@ -67,12 +67,29 @@ class FakeAudioCapture:
         self.stopped += 1
 
 
+def create_fake_audio_capture(
+    backend,
+    *,
+    sample_rate,
+    step_size,
+):
+    capture = FakeAudioCapture(sample_rate, step_size)
+    capture.backend = backend
+    return capture
+
+
 class FakeTranslator:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        self.calls = []
+        self.commits = []
 
     def translate(self, text, **kwargs):
+        self.calls.append((text, kwargs))
         return f"translated:{text}"
+
+    def commit_translation(self, source, translated):
+        self.commits.append((source, translated))
 
 
 class PipelineTests(unittest.TestCase):
@@ -80,7 +97,10 @@ class PipelineTests(unittest.TestCase):
         events = RecordingEvents()
         settings = make_settings()
 
-        with patch("core.pipeline.AudioCapture", FakeAudioCapture):
+        with patch(
+            "core.pipeline.create_audio_capture",
+            side_effect=create_fake_audio_capture,
+        ):
             pipeline = Pipeline(settings=settings, events=events)
 
         pipeline.processing_loop()
@@ -91,7 +111,7 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(events.stop_count, 1)
 
-    def test_translation_emits_final_and_interim_events(self):
+    def test_translation_helpers_delegate_to_translator(self):
         events = RecordingEvents()
         settings = make_settings(
             translation_enabled=True,
@@ -99,27 +119,50 @@ class PipelineTests(unittest.TestCase):
         )
 
         with (
-            patch("core.pipeline.AudioCapture", FakeAudioCapture),
+            patch(
+                "core.pipeline.create_audio_capture",
+                side_effect=create_fake_audio_capture,
+            ),
             patch("core.pipeline.Translator", FakeTranslator),
         ):
             pipeline = Pipeline(settings=settings, events=events)
 
-        pipeline._run_translation("hello", 1)
-        pipeline._run_translation("growing", 2, interim=True)
+        translated = pipeline._translate_text(
+            "growing",
+            trailing_context="earlier draft",
+            interim=True,
+            record_context=False,
+        )
+        pipeline._commit_translation("growing", translated)
 
+        self.assertEqual(translated, "translated:growing")
         self.assertEqual(
-            events.text,
+            pipeline.translator.calls,
             [
-                (1, "hello", "translated:hello"),
-                (2, "", "translated:growing"),
+                (
+                    "growing",
+                    {
+                        "debug": False,
+                        "trailing_context": "earlier draft",
+                        "interim": True,
+                        "record_context": False,
+                    },
+                )
             ],
+        )
+        self.assertEqual(
+            pipeline.translator.commits,
+            [("growing", "translated:growing")],
         )
 
     def test_pause_resume_and_stop_do_not_use_qt(self):
         events = RecordingEvents()
         settings = make_settings(asr_backend="funasr_realtime")
 
-        with patch("core.pipeline.AudioCapture", FakeAudioCapture):
+        with patch(
+            "core.pipeline.create_audio_capture",
+            side_effect=create_fake_audio_capture,
+        ):
             pipeline = Pipeline(settings=settings, events=events)
 
         pipeline.pause()
@@ -129,6 +172,23 @@ class PipelineTests(unittest.TestCase):
         pipeline.stop()
         self.assertFalse(pipeline.running)
         self.assertEqual(pipeline.audio.stopped, 1)
+
+    def test_audio_backend_is_passed_to_capture_factory(self):
+        events = RecordingEvents()
+        settings = make_settings(audio_capture_backend="blackhole")
+
+        with patch(
+            "core.pipeline.create_audio_capture",
+            side_effect=create_fake_audio_capture,
+        ) as create_capture:
+            pipeline = Pipeline(settings=settings, events=events)
+
+        create_capture.assert_called_once_with(
+            "blackhole",
+            sample_rate=16000,
+            step_size=0.2,
+        )
+        self.assertEqual(pipeline.audio.backend, "blackhole")
 
 
 if __name__ == "__main__":

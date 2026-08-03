@@ -3,13 +3,8 @@ import random
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
-
-def _display_len(s: str) -> int:
-    """Display length for interim-translation thresholds: CJK/fullwidth chars
-    count 2, others 1."""
-    return sum(2 if ord(c) > 0x2E7F else 1 for c in s)
+from core.translation_scheduler import TranslationScheduler
 
 
 def run_funasr_realtime(pipeline) -> None:
@@ -55,16 +50,38 @@ def run_funasr_realtime(pipeline) -> None:
 
     headers = [f"Authorization: Bearer {api_key}"]
 
-    translate_executor = ThreadPoolExecutor(max_workers=1)
     sentence_id = 1
     last_committed = ""
     last_interim = ""
-    interim_fired = 0  # how many interim translations fired for current sentence
-    # Fire interim translations when a growing sentence crosses 1x/2x/3x of
-    # this display-length threshold (0 = disabled).
-    interim_translate_units = int(
-        settings.funasr_interim_translate_chars or 0
-    )
+
+    translation_scheduler = None
+    if (
+        getattr(pipeline, "translation_enabled", False)
+        and getattr(pipeline, "translator", None) is not None
+    ):
+        translation_scheduler = TranslationScheduler(
+            translate=lambda text, interim: pipeline._translate_text(
+                text,
+                interim=interim,
+                record_context=False,
+            ),
+            commit_final=pipeline._commit_translation,
+            on_interim=lambda sid, translated: pipeline.events.on_text(
+                sid,
+                "",
+                translated,
+            ),
+            on_final=lambda sid, source, translated: pipeline.events.on_text(
+                sid,
+                source,
+                translated,
+            ),
+            on_final_failure=lambda sid, source: pipeline.events.on_text(
+                sid,
+                source,
+                "[Translation Failed]",
+            ),
+        )
 
     event_log = None
     event_log_path = (settings.funasr_realtime_event_log or "").strip()
@@ -115,51 +132,25 @@ def run_funasr_realtime(pipeline) -> None:
             pass
 
     def _show_interim(text: str) -> None:
-        nonlocal interim_fired
         t = (text or "").strip()
         if not t:
             return
         pipeline.events.on_live_text(sentence_id, "", t)
-        # Interim translation for long sentences: fire at every threshold
-        # multiple (1x/2x/3x/...). Each fire translates the FULL current
-        # interim, so a later fire overwrites the previous temporary
-        # translation; the final translation at sentence_end overwrites them
-        # all. Interim results never enter the translator's context window.
-        if (
-            interim_translate_units > 0
-            and getattr(pipeline, "translation_enabled", False)
-            and getattr(pipeline, "translator", None) is not None
-        ):
-            units = _display_len(t)
-            if units >= (interim_fired + 1) * interim_translate_units:
-                interim_fired += 1
-                print(f"[FunASR] interim translation #{interim_fired} at {units} units")
-                try:
-                    translate_executor.submit(pipeline._run_translation, t, sentence_id, None, True)
-                except Exception:
-                    pass
+        if translation_scheduler is not None:
+            translation_scheduler.submit_interim(sentence_id, t)
 
     def _commit_sentence(text: str) -> None:
-        nonlocal sentence_id, last_committed, interim_fired
+        nonlocal sentence_id, last_committed
         seg = (text or "").strip()
         if not seg or seg == last_committed:
             return
         last_committed = seg
         cid = sentence_id
-        # When an interim translation is already displayed, keep it visible
-        # (empty placeholder does not overwrite) until the final one arrives.
-        had_interim_tr = interim_fired > 0
-        interim_fired = 0
-        if getattr(pipeline, "translation_enabled", False) and getattr(pipeline, "translator", None) is not None:
-            pipeline.events.on_text(
-                cid,
-                seg,
-                "" if had_interim_tr else "(translating...)",
-            )
-            try:
-                translate_executor.submit(pipeline._run_translation, seg, cid, None)
-            except Exception:
-                pass
+        if translation_scheduler is not None:
+            # Empty translation preserves an already displayed interim result;
+            # a row without one renders its standard ellipsis placeholder.
+            pipeline.events.on_text(cid, seg, "")
+            translation_scheduler.submit_final(cid, seg)
         else:
             pipeline.events.on_text(cid, seg, "")
         sentence_id = cid + 1
@@ -436,7 +427,6 @@ def run_funasr_realtime(pipeline) -> None:
             # An interrupted sentence is dropped on reconnect; the server
             # re-starts recognition state with the next run-task anyway.
             last_interim = ""
-            interim_fired = 0
 
             last_err = (err.get("msg") or "").strip()
             if not last_err:
@@ -463,10 +453,8 @@ def run_funasr_realtime(pipeline) -> None:
             pipeline.audio.stop()
         except Exception:
             pass
-        try:
-            translate_executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
+        if translation_scheduler is not None:
+            translation_scheduler.shutdown()
         try:
             if event_log is not None:
                 event_log.close()

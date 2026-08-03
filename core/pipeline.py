@@ -1,7 +1,7 @@
 import threading
 from typing import Protocol
 
-from core.audio_capture import AudioCapture
+from core.audio_capture import create_audio_capture
 from core.settings import PipelineSettings
 from core.translator import Translator
 
@@ -42,7 +42,8 @@ class Pipeline:
 
         settings.print_summary()
 
-        self.audio = AudioCapture(
+        self.audio = create_audio_capture(
+            settings.audio_capture_backend,
             sample_rate=settings.sample_rate,
             step_size=settings.streaming_step_size,
         )
@@ -102,24 +103,24 @@ class Pipeline:
     def _translation_debug_enabled(self) -> bool:
         return self.settings.translation_debug
 
-    def _run_translation(self, text: str, chunk_id: int, trailing_context: str | None = None, interim: bool = False):
-        # interim translations only refresh the translation slot of the live
-        # line (empty original keeps the growing source text untouched) and
-        # are fully overwritten by the next interim or the final translation.
-        original = "" if interim else text
-        try:
-            translated = self.translator.translate(
-                text,
-                debug=self._translation_debug_enabled(),
-                trailing_context=trailing_context,
-                interim=interim,
-            )
-            self.events.on_text(chunk_id, original, translated)
-        except Exception as e:
-            self.events.on_text(chunk_id, original, "[Translation Failed]")
-            self.events.on_error(
-                f"Translation failed: {type(e).__name__}: {e}"
-            )
+    def _translate_text(
+        self,
+        text: str,
+        *,
+        trailing_context: str | None = None,
+        interim: bool = False,
+        record_context: bool = True,
+    ) -> str:
+        return self.translator.translate(
+            text,
+            debug=self._translation_debug_enabled(),
+            trailing_context=trailing_context,
+            interim=interim,
+            record_context=record_context,
+        )
+
+    def _commit_translation(self, source: str, translated: str) -> None:
+        self.translator.commit_translation(source, translated)
 
     def _signal_error(self, message: str) -> None:
         msg = (message or "").strip()

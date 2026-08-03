@@ -1,12 +1,9 @@
-import tempfile
 import unittest
 from dataclasses import replace
-from pathlib import Path
 from unittest.mock import patch
 
 from ui_macos.settings_store import (
     BUNDLE_ID,
-    INITIALIZED_KEY,
     INTERFACE_LANGUAGE_KEY,
     SettingsStore,
 )
@@ -31,9 +28,6 @@ class FakeDefaults:
 
     def stringForKey_(self, key):
         return self.values.get(key, self.registered.get(key))
-
-    def setBool_forKey_(self, value, key):
-        self.values[key] = bool(value)
 
     def setObject_forKey_(self, value, key):
         self.values[key] = value
@@ -81,10 +75,7 @@ class SettingsStoreTests(unittest.TestCase):
             )
             defaults_class.standardUserDefaults.return_value = defaults
 
-            store = SettingsStore(
-                config_path=Path("/nonexistent/config.ini"),
-                credentials=FakeCredentials(),
-            )
+            store = SettingsStore(credentials=FakeCredentials())
 
         self.assertIs(store.defaults, defaults)
         defaults_class.standardUserDefaults.assert_called_once_with()
@@ -105,10 +96,7 @@ class SettingsStoreTests(unittest.TestCase):
                 defaults
             )
 
-            store = SettingsStore(
-                config_path=Path("/nonexistent/config.ini"),
-                credentials=FakeCredentials(),
-            )
+            store = SettingsStore(credentials=FakeCredentials())
 
         self.assertIs(store.defaults, defaults)
         defaults_class.alloc.return_value.initWithSuiteName_.assert_called_once_with(
@@ -116,61 +104,11 @@ class SettingsStoreTests(unittest.TestCase):
         )
         defaults_class.standardUserDefaults.assert_not_called()
 
-    def test_imports_existing_ini_once(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config_path = Path(directory) / "config.ini"
-            config_path.write_text(
-                "[translation]\n"
-                "enabled = false\n"
-                "base_url = http://127.0.0.1:8000/v1\n"
-                "model = local-model\n"
-                "target_lang = Japanese\n"
-                "\n[transcription]\n"
-                "backend = funasr_realtime\n"
-                "funasr_realtime_model = imported-asr\n"
-                "\n[audio]\n"
-                "sample_rate = 16000\n"
-                "\n[display]\n"
-                "original_font_size = 15\n"
-                "background_opacity = 0.66\n",
-                encoding="utf-8",
-            )
-            defaults = FakeDefaults()
-            store = SettingsStore(
-                defaults=defaults,
-                config_path=config_path,
-                credentials=FakeCredentials(),
-            )
-
-            preferences = store.load()
-            self.assertTrue(defaults.values[INITIALIZED_KEY])
-            self.assertFalse(preferences.translation_enabled)
-            self.assertEqual(preferences.model, "local-model")
-            self.assertEqual(preferences.target_lang, "Japanese")
-            self.assertEqual(
-                preferences.funasr_realtime_model,
-                "imported-asr",
-            )
-            self.assertEqual(preferences.original_font_size, 15)
-            self.assertEqual(preferences.background_opacity, 0.66)
-
-            config_path.write_text(
-                "[translation]\nmodel = changed-later\n",
-                encoding="utf-8",
-            )
-            second = SettingsStore(
-                defaults=defaults,
-                config_path=config_path,
-                credentials=FakeCredentials(),
-            )
-            self.assertEqual(second.load().model, "local-model")
-
     def test_pipeline_settings_use_credential_store_and_never_defaults(self):
         defaults = FakeDefaults()
         credentials = FakeCredentials()
         store = SettingsStore(
             defaults=defaults,
-            config_path=Path("/nonexistent/config.ini"),
             credentials=credentials,
         )
 
@@ -185,12 +123,12 @@ class SettingsStoreTests(unittest.TestCase):
         defaults = FakeDefaults()
         store = SettingsStore(
             defaults=defaults,
-            config_path=Path("/nonexistent/config.ini"),
             credentials=FakeCredentials(),
         )
         current = store.load()
         updated = replace(
             current,
+            audio_capture_backend="blackhole",
             translated_font_size=21,
             translation_provider="google",
             background_opacity=0.7,
@@ -198,6 +136,7 @@ class SettingsStoreTests(unittest.TestCase):
         store.save(updated)
 
         saved = store.load()
+        self.assertEqual(saved.audio_capture_backend, "blackhole")
         self.assertEqual(saved.translated_font_size, 21)
         self.assertEqual(saved.translation_provider, "google")
         self.assertEqual(saved.background_opacity, 0.7)
@@ -206,7 +145,6 @@ class SettingsStoreTests(unittest.TestCase):
         defaults = FakeDefaults()
         store = SettingsStore(
             defaults=defaults,
-            config_path=Path("/nonexistent/config.ini"),
             credentials=FakeCredentials(),
         )
 
@@ -218,6 +156,30 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(
             defaults.values[INTERFACE_LANGUAGE_KEY],
             "zh",
+        )
+
+    def test_audio_capture_backend_defaults_to_native(self):
+        store = SettingsStore(
+            defaults=FakeDefaults(),
+            credentials=FakeCredentials(),
+        )
+
+        self.assertEqual(store.load().audio_capture_backend, "native")
+        self.assertEqual(
+            store.pipeline_settings().audio_capture_backend,
+            "native",
+        )
+
+    def test_default_thinking_maps_to_omitted_runtime_setting(self):
+        defaults = FakeDefaults()
+        defaults.values["translation.thinking"] = "auto"
+        store = SettingsStore(
+            defaults=defaults,
+            credentials=FakeCredentials(),
+        )
+
+        self.assertIsNone(
+            store.pipeline_settings().translation_thinking
         )
 
 

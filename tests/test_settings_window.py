@@ -1,5 +1,4 @@
 import unittest
-from pathlib import Path
 from unittest.mock import call, patch
 
 from AppKit import NSApplication, NSTextFieldRoundedBezel
@@ -7,7 +6,12 @@ from AppKit import NSApplication, NSTextFieldRoundedBezel
 from tests.test_settings_store import FakeCredentials, FakeDefaults
 from ui_macos.settings_store import SettingsStore
 from ui_macos.settings_window import (
+    CONTROL_FONT_SIZE,
+    CONTROL_WIDTH,
+    FORM_COLUMN_SPACING,
+    FORM_LABEL_WIDTH,
     FUNASR_API_KEY_GUIDES,
+    FUNASR_ENDPOINTS,
     PANE_CONTENT_WIDTH,
     SAVED_KEY_PLACEHOLDER,
     SettingsWindow,
@@ -32,7 +36,6 @@ class SettingsWindowTests(unittest.TestCase):
         self.credentials = FakeCredentials()
         self.store = SettingsStore(
             defaults=self.defaults,
-            config_path=Path("/nonexistent/mac-live-subtitle-config.ini"),
             credentials=self.credentials,
         )
         self.saved = []
@@ -48,11 +51,13 @@ class SettingsWindowTests(unittest.TestCase):
         self.settings.window.close()
 
     def test_load_and_save_native_controls(self):
+        self.settings.audio_capture_backend.selectItemAtIndex_(1)
         self.settings.translation_model.setStringValue_("updated-model")
         self.settings.translated_font.setIntegerValue_(22)
         self.settings.saveSettings_(None)
 
         preferences = self.store.load()
+        self.assertEqual(preferences.audio_capture_backend, "blackhole")
         self.assertEqual(preferences.model, "updated-model")
         self.assertEqual(preferences.translated_font_size, 22)
         self.assertTrue(self.saved[-1][1])
@@ -70,11 +75,11 @@ class SettingsWindowTests(unittest.TestCase):
         )
         self.assertEqual(
             self.settings.asr_key_status.stringValue(),
-            "Saved locally",
+            "",
         )
         self.assertEqual(
             self.settings.translation_key_status.stringValue(),
-            "Saved locally",
+            "",
         )
 
     def test_saving_untouched_placeholders_does_not_write_keys(self):
@@ -162,6 +167,53 @@ class SettingsWindowTests(unittest.TestCase):
             "",
         )
         self.assertFalse(self.settings.translation_key_visibility.isEnabled())
+        self.assertEqual(
+            self.settings.translation_thinking.titleOfSelectedItem(),
+            "Default",
+        )
+        self.assertTrue(self.settings.translation_thinking.isEnabled())
+
+    def test_provider_thinking_defaults_and_drafts(self):
+        self.settings.translation_thinking.selectItemAtIndex_(1)
+
+        self.settings.translation_provider.selectItemWithTitle_("Gemini")
+        self.settings.translationProviderChanged_(None)
+
+        self.assertEqual(
+            self.settings.translation_thinking.titleOfSelectedItem(),
+            "Default",
+        )
+        self.assertEqual(
+            self.settings._preferences_from_fields().translation_thinking,
+            "auto",
+        )
+
+        self.settings.translation_thinking.selectItemAtIndex_(1)
+        self.assertEqual(
+            self.settings._preferences_from_fields().translation_thinking,
+            "true",
+        )
+
+        self.settings.translation_provider.selectItemWithTitle_("Custom")
+        self.settings.translationProviderChanged_(None)
+        self.assertEqual(
+            self.settings.translation_thinking.titleOfSelectedItem(),
+            "Default",
+        )
+
+        self.settings.translation_provider.selectItemWithTitle_("DeepSeek")
+        self.settings.translationProviderChanged_(None)
+        self.assertEqual(
+            self.settings.translation_thinking.titleOfSelectedItem(),
+            "Enabled",
+        )
+
+        self.settings.translation_provider.selectItemWithTitle_("Gemini")
+        self.settings.translationProviderChanged_(None)
+        self.assertEqual(
+            self.settings.translation_thinking.titleOfSelectedItem(),
+            "Enabled",
+        )
 
     def test_provider_keys_remain_separate(self):
         self.settings.translation_key.setStringValue_("deepseek-updated")
@@ -299,8 +351,23 @@ class SettingsWindowTests(unittest.TestCase):
             ],
         )
 
+    def test_transcription_region_selects_fixed_endpoint(self):
+        self.assertFalse(hasattr(self.settings, "asr_url"))
+        self.assertEqual(
+            self.settings.asr_region.titleOfSelectedItem(),
+            "China (Beijing)",
+        )
+
+        self.settings.asr_region.selectItemAtIndex_(1)
+
+        self.assertEqual(
+            self.settings._preferences_from_fields().funasr_realtime_ws_url,
+            FUNASR_ENDPOINTS["international"],
+        )
+
     def test_translation_primary_fields_use_full_width_layout(self):
         for control in (
+            self.settings.asr_region,
             self.settings.translation_provider,
             self.settings.target_language,
             self.settings.translation_key_control,
@@ -309,6 +376,20 @@ class SettingsWindowTests(unittest.TestCase):
                 control.fittingSize().width,
                 PANE_CONTENT_WIDTH,
             )
+
+    def test_form_columns_fill_pane_width(self):
+        self.assertEqual(
+            FORM_LABEL_WIDTH + FORM_COLUMN_SPACING + CONTROL_WIDTH,
+            PANE_CONTENT_WIDTH,
+        )
+
+    def test_full_width_credential_fields_leave_room_for_eye_button(self):
+        self.settings.asr_key_control.layoutSubtreeIfNeeded()
+
+        self.assertEqual(
+            self.settings.asr_key_revealed.frame().size.width,
+            PANE_CONTENT_WIDTH - 30,
+        )
 
     def test_interface_language_switches_immediately_and_persists(self):
         self.settings.target_language.setStringValue_("Japanese")
@@ -348,8 +429,28 @@ class SettingsWindowTests(unittest.TestCase):
             "关闭",
         )
         self.assertEqual(
+            self.settings.translation_thinking.itemTitleAtIndex_(2),
+            "默认",
+        )
+        self.assertEqual(
+            self.settings.asr_region.itemTitleAtIndex_(0),
+            "中国（北京）",
+        )
+        self.assertEqual(
+            self.settings.asr_region.itemTitleAtIndex_(1),
+            "国际（新加坡）",
+        )
+        self.assertEqual(
+            self.settings.audio_capture_backend.itemTitleAtIndex_(0),
+            "原生系统音频",
+        )
+        self.assertEqual(
+            self.settings.audio_capture_backend.itemTitleAtIndex_(1),
+            "BlackHole 兼容模式",
+        )
+        self.assertEqual(
             self.settings.asr_key_status.stringValue(),
-            "已保存在本机",
+            "",
         )
         self.assertEqual(
             self.settings.target_language.stringValue(),
@@ -365,10 +466,8 @@ class SettingsWindowTests(unittest.TestCase):
             self.settings.asr_key,
             self.settings.asr_key_revealed,
             self.settings.asr_model,
-            self.settings.asr_url,
             self.settings.source_language,
             self.settings.max_silence,
-            self.settings.interim_chars,
             self.settings.translation_key,
             self.settings.translation_key_revealed,
             self.settings.translation_base_url,
@@ -379,6 +478,30 @@ class SettingsWindowTests(unittest.TestCase):
             self.assertEqual(
                 field.bezelStyle(),
                 NSTextFieldRoundedBezel,
+            )
+
+    def test_form_controls_use_consistent_font_size(self):
+        for control in (
+            self.settings.asr_key,
+            self.settings.asr_key_revealed,
+            self.settings.asr_model,
+            self.settings.source_language,
+            self.settings.max_silence,
+            self.settings.translation_key,
+            self.settings.translation_key_revealed,
+            self.settings.translation_base_url,
+            self.settings.translation_model,
+            self.settings.target_language,
+            self.settings.temperature,
+            self.settings.asr_region,
+            self.settings.translation_provider,
+            self.settings.translation_thinking,
+            self.settings.advanced_buttons["settings.transcription"],
+            self.settings.advanced_buttons["settings.translation"],
+        ):
+            self.assertEqual(
+                control.font().pointSize(),
+                CONTROL_FONT_SIZE,
             )
 
     def test_switching_panes_clears_text_input_focus(self):
@@ -397,6 +520,40 @@ class SettingsWindowTests(unittest.TestCase):
         self.assertIs(
             self.settings.window.firstResponder(),
             self.settings.window,
+        )
+
+    def test_show_preserves_unsaved_fields_when_window_is_visible(self):
+        self.settings.window.makeKeyAndOrderFront_(None)
+        self.settings.asr_model.setStringValue_("unsaved-model")
+
+        self.settings.show()
+
+        self.assertEqual(
+            self.settings.asr_model.stringValue(),
+            "unsaved-model",
+        )
+
+    def test_translation_test_passes_thinking_setting(self):
+        with (
+            patch(
+                "ui_macos.settings_window.test_translation_connection",
+                return_value="测试成功",
+            ) as test_connection,
+            patch("ui_macos.settings_window.threading.Thread") as thread,
+            patch(
+                "ui_macos.settings_window.AppHelper.callAfter",
+                side_effect=lambda callback, *args: callback(*args),
+            ),
+        ):
+            self.settings.testTranslation_(None)
+            thread.call_args.kwargs["target"]()
+
+        self.assertFalse(
+            test_connection.call_args.kwargs["thinking"]
+        )
+        self.assertEqual(
+            self.settings.translation_test_result.stringValue(),
+            "测试成功",
         )
 
 

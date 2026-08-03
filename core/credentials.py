@@ -11,15 +11,6 @@ TRANSLATION_ACCOUNTS = {
 }
 
 
-def infer_translation_provider(base_url: str | None) -> str:
-    normalized = (base_url or "").rstrip("/")
-    if normalized == "https://api.deepseek.com/v1":
-        return "deepseek"
-    if normalized == "https://generativelanguage.googleapis.com/v1beta/openai":
-        return "google"
-    return "custom"
-
-
 def translation_account(provider: str) -> str:
     return TRANSLATION_ACCOUNTS[provider]
 
